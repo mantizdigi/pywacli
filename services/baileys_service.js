@@ -1,0 +1,383 @@
+
+const {
+    broadcastEvent
+} = require("./ws_server")
+
+const {
+    setSocket
+} = require("./session_manager")
+
+
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason
+} = require("baileys")
+
+const P = require("pino")
+const qrcode = require("qrcode-terminal")
+
+// DownloadMedia  
+
+const fs = require("fs")
+const path = require("path")
+const{
+    downloadMediaMessage
+} = require("baileys")
+
+
+async function startSock() {
+
+    const {
+        state,
+        saveCreds
+    } = await useMultiFileAuthState("./auth")
+
+    const sock = makeWASocket({
+        auth: state,
+        logger: P({ level: "silent" }),
+
+        markOnlineOnConnect: false,
+
+        browser: ["PyWacli", "Chrome", "1.0.0"]
+    })
+
+    setSocket(sock)
+
+    sock.ev.on("connection.update", async (update) => {
+
+        const {
+            connection,
+            lastDisconnect,
+            qr
+        } = update
+
+        // QR EVENT
+        if (qr) {
+
+            console.log("\nScan QR:\n")
+
+            broadcastEvent("auth.qr", {
+                qr
+            })
+
+            qrcode.generate(qr, {
+                small: true
+            })
+        }
+
+        // CONNECTED
+        if (connection === "open") {
+
+            console.log("✅ Connected")
+
+            broadcastEvent("connection.open", {
+                user: sock.user
+            })
+        }
+
+        // DISCONNECTED
+        if (connection === "close") {
+
+            const shouldReconnect =
+                lastDisconnect?.error?.output?.statusCode
+                !== DisconnectReason.loggedOut
+
+            broadcastEvent("connection.close", {
+                reason: lastDisconnect?.error?.output?.statusCode
+            })
+
+            console.log("❌ Disconnected")
+
+            if (shouldReconnect) {
+
+                console.log("♻️ Reconnecting...")
+
+                setTimeout(() => {
+                    startSock()
+                }, 3000)
+            }
+        }
+    })
+
+    // SAVE CREDS
+    sock.ev.on("creds.update", saveCreds)
+
+    // RECEIVE MESSAGES
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+
+        console.log("\n========= MESSAGE UPSERT =========")
+
+        try {
+
+            for (const msg of messages) {
+                try {
+                    
+                    const image = msg.message?.imageMessage
+                    const video = msg.message?.videoMessage
+                    const document = msg.message?.documentMessage
+
+                    let mediaType = null 
+
+                    if (image) mediaType = "image"
+                    else if (video) mediaType = "video"
+                    else if (document) mediaType = "document"
+
+                    console.log("Sender:", msg.key.remoteJid)
+                    console.log("Message ID:", msg.key.id)
+                    console.log("Media Type:", mediaType || "none")
+
+                    if (mediaType){
+
+                        const buffer = 
+                            await downloadMediaMessage(
+                                msg,
+                                "buffer",
+                                {},
+                                {
+                                   logger: P({level:"silent"}),
+                                   reuploadRequest:sock.updateMediaMessage 
+                                }
+                            )
+                        const mimeType =
+                            image?.mimetype ||
+                            video?.mimetype ||
+                            document?.mimetype
+                        const extenstion = mimeType.split("/")[1] || "bin"
+                        const fileName = `${msg.key.id}.${extenstion}`
+                        const folder = `media/${mediaType}s`
+
+                        fs.mkdirSync(folder, { recursive: true })
+
+                        const filePath = path.join(folder, fileName)
+
+                        fs.writeFileSync(filePath, buffer)
+
+                        broadcastEvent("media.new",{
+                            jid: msg.key.remoteJid,
+                            id:msg.key.id,
+                            fileName, 
+                            filePath,
+                            mimeType,
+                            mediaType,
+                            pushName:msg.pushName,
+                            fromMe:msg.key.fromMe,
+                            participant:msg.key.participant,
+                            timestamp:Date.now()
+                        })
+
+                        console.log("Media downloaded:", filePath)
+                    }
+
+                    if (!msg.message) continue
+
+                    const jid = msg.key.remoteJid
+
+                    const isStatus =
+                        jid === "status@broadcast"
+
+                    // TEXT EXTRACTION
+                    const text =
+                        msg.message.conversation ||
+                        msg.message.extendedTextMessage?.text ||
+                        msg.message.imageMessage?.caption ||
+                        msg.message.videoMessage?.caption
+
+                    if (!text) continue
+
+                    // COMMON PAYLOAD
+                    const payload = {
+
+                        jid,
+                        text,
+                        id: msg.key.id,
+                        pushName:
+                            msg.pushName || "",
+                        fromMe:
+                            msg.key.fromMe,
+                        participant:
+                            msg.key.participant,
+                        timestamp:
+                            Date.now()
+                    }
+
+                    // STATUS EVENT
+                    if (isStatus) {
+
+                        payload.isMyStatus =
+                            msg.key.participant === sock.user.id
+
+                        broadcastEvent(
+                            "status.new",
+                            payload
+                        )
+                        console.log(
+                            `📸 STATUS: ${text}`
+                        )
+                    }
+
+                    // NORMAL MESSAGE
+                    else {
+                        broadcastEvent(
+                            "message.new",
+                            payload
+                        )
+                        console.log(
+                            `📩 ${jid}: ${text}`
+                        )
+                    }
+
+                } catch (err) {
+
+                    console.log(
+                        "❌ Error processing message:",
+                        err
+                    )
+                }
+            }
+
+        } catch (err) {
+
+            console.log(
+                "❌ messages.upsert error:",
+                err
+            )
+        }
+    })
+
+
+    // MESSAGE UPDATE
+    sock.ev.on("messages.update", async (updates) => {
+
+        try {
+
+
+            for (const update of updates) {
+
+                try {
+
+                    const sender = update.key.remoteJid
+
+                    const edited =
+                        update.update?.message?.editedMessage?.message
+
+                    if (!edited) continue
+
+                    const text =
+                        edited.conversation ||
+                        edited.extendedTextMessage?.text
+
+                    console.log("\n========= MESSAGE EDITED =========")
+                    console.log("✏️ Message Edited")
+                    console.log("Sender:", sender)
+                    console.log("New Text:", text)
+
+                    broadcastEvent("message.update", {
+                        jid: sender,
+                        text,
+                        id: update.key.id,
+                        pushName: update.pushName,
+                        fromMe: update.key.fromMe,
+                        timestamp:Date.now()
+                    })
+
+                } catch (err) {
+
+                    console.log("❌ Error processing updated message:", err)
+                }
+            }
+
+        } catch (err) {
+
+            console.log("❌ messages.update error:", err)
+        }
+    })
+
+
+    // MESSAGE DELETE
+    sock.ev.on("messages.delete", (item) => {
+
+        try {
+
+            console.log("==========🗑 Message Deleted =========")
+        
+            const deletedMessages = item.keys.map((k) => ({
+
+                id: k.id,
+                jid: k.remoteJid,
+                fromMe: k.fromMe,
+                pushName: item.pushName,
+                timestamp: Date.now()
+
+            }))
+
+            broadcastEvent("message.delete", {
+                messages: deletedMessages
+            })
+
+        } catch (err) {
+
+            console.log("❌ messages.delete error:", err)
+        }
+    })
+
+
+    // MESSAGE REACTION
+    sock.ev.on("messages.reaction", (reactions) => {
+
+        try {
+
+            console.log("==========❤️ Reaction =========")
+
+            const formattedReactions = reactions.map((r) => ({
+
+                jid: r.key.remoteJid,
+
+                messageId: r.key.id,
+                reaction: r.reaction?.text,
+                fromMe: r.key.fromMe,
+                pushName: r.pushName,
+                reactedTo: {
+                    id: r.reaction?.key?.id,
+                    jid: r.reaction?.key?.remoteJid,
+                    fromMe: r.reaction?.key?.fromMe,
+                    pushName: r.reaction?.pushName
+                },
+
+                timestamp:
+                    r.reaction?.senderTimestampMs?.low ||
+                    Date.now()
+
+            }))
+
+            broadcastEvent("message.reaction", {
+                reactions: formattedReactions
+            })
+
+        } catch (err) {
+
+            console.log("❌ messages.reaction error:", err)
+        }
+    })
+
+
+    // PRESENCE UPDATE
+    sock.ev.on("presence.update", (presence) => {
+
+        try {
+
+            console.log("==========🟢 Presence =========")
+            broadcastEvent("presence.update", {
+                presence
+            })
+
+        } catch (err) {
+
+            console.log("❌ presence.update error:", err)
+        }
+    })
+
+}
+
+
+startSock()

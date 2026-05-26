@@ -1,0 +1,6 @@
+typer[all]
+rich
+websockets
+asyncio
+boto3
+dotenv

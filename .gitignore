@@ -1,0 +1,37 @@
+# Virtual environment directories
+.venv/
+venv/
+.env/
+
+# Environment variables
+.env
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+
+#Database files
+*.db
+
+# Node modules and build output
+node_modules/
+dist/
+
+# Logs
+*.log
+*.logs
+
+# Authentication files and directories
+auth/
+
+# Node package files
+package-lock.json
+package.json
+
+# Media
+media/
+
+# auth directories
+auth/

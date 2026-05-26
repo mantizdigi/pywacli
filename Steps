@@ -1,0 +1,208 @@
+## STEP 1 — Create Project Structure
+
+Inside:
+
+D:\PremRaj\zcoder\pywacli
+
+Create:
+    services/
+        baileys_service.js
+
+
+## STEP 2 — Install Required Packages
+
+Run:
+    npm install qrcode-terminal pino
+
+    npm install express ws
+    
+    npm install baileys
+
+
+## STEP 3 — Implement the WhatsApp Socket
+
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason
+} = require("baileys")
+
+const P = require("pino")
+const qrcode = require("qrcode-terminal")
+
+async function startSock() {
+
+    // SAVE LOGIN SESSION
+    const { state, saveCreds } =
+        await useMultiFileAuthState("./auth")
+
+    // CREATE SOCKET
+    const sock = makeWASocket({
+        auth: state,
+        logger: P({ level: "silent" }),
+
+        // IMPORTANT
+        markOnlineOnConnect: false,
+
+        // BROWSER INFO
+        browser: ["PyWacli", "Chrome", "1.0.0"]
+    })
+
+    // CONNECTION EVENTS
+    sock.ev.on("connection.update", async (update) => {
+
+        const {
+            connection,
+            lastDisconnect,
+            qr
+        } = update
+
+        // SHOW QR
+        if (qr) {
+            console.log("\nScan this QR with WhatsApp:\n")
+
+            qrcode.generate(qr, {
+                small: true
+            })
+        }
+
+        // CONNECTED
+        if (connection === "open") {
+            console.log("\n✅ WhatsApp Connected!\n")
+        }
+
+        // DISCONNECTED
+        if (connection === "close") {
+
+            const shouldReconnect =
+                lastDisconnect?.error?.output?.statusCode
+                !== DisconnectReason.loggedOut
+
+            console.log("Disconnected.")
+
+            if (shouldReconnect) {
+                startSock()
+            }
+        }
+    })
+
+    // SAVE AUTH
+    sock.ev.on("creds.update", saveCreds)
+
+    // RECEIVE MESSAGES
+    sock.ev.on("messages.upsert", async ({ messages }) => {
+
+        const msg = messages[0]
+
+        if (!msg.message) return
+
+        const sender = msg.key.remoteJid
+
+        const text =
+            msg.message.conversation ||
+            msg.message.extendedTextMessage?.text
+
+        console.log("\n📩 New Message")
+        console.log("From:", sender)
+        console.log("Text:", text)
+    })
+}
+
+startSock()
+
+
+## STEP 4 - Run the Application
+node services/baileys_service.js
+
+
+## STEP 5 - WEBSOCKET SERVER 
+
+1. EXPRESS SERVER
+
+Install:
+    npm install express ws
+
+WHY EXPRESS?
+Creates local API server:
+
+    http://localhost:3000
+
+2. WEBSOCKET SERVER
+
+Using:
+    const WebSocket = require("ws")
+
+WHY WEBSOCKET?
+
+    Because WhatsApp events are realtime.
+    HTTP polling is bad.
+
+    FOLLOW:
+
+    WhatsApp Message
+        ↓
+    Baileys Event
+        ↓
+    WebSocket Broadcast
+        ↓
+    Python Receives Instantly
+
+3. EVENT NORMALIZER
+
+MOST IMPORTANT PART.
+Right now Baileys events are messy.
+You need clean format.
+
+RAW BAILEYS EVENT
+
+    Looks like:
+
+    {
+    key: {
+        remoteJid: "9198@s.whatsapp.net"
+    },
+    message: {
+        conversation: "hello"
+    }
+    }
+
+NORMALIZED EVENT
+
+You convert to:
+    {
+    "event": "message",
+    "chat": "9198",
+    "text": "hello",
+    "fromMe": false,
+    "timestamp": 1715955500
+    }
+
+4. EVENT BUS
+
+    Create function:
+        broadcastEvent(data)
+    
+    This:
+        sends websocket event
+        later writes DB
+        later sends to UI
+
+
+5. PYTHON CLIENT
+
+Python listens:
+
+    ws://localhost:3001
+
+Now Python receives realtime WhatsApp events.
+
+
+WHAT YOU UNLOCK AFTER PHASE 2
+
+LIVE TERMINAL CHAT
+
+    [Mom]
+    hello
+
+    [Friend]
+    where are you

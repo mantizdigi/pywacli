@@ -1,0 +1,42 @@
+pywacli/
+│
+├── cli/
+│   ├── auth.py
+│   ├── sync.py
+│   ├── send.py
+│   ├── messages.py
+│   └── accounts.py
+│
+├── core/
+│   ├── config.py
+│   ├── locks.py
+│   ├── events.py
+│   ├── logging.py
+│   └── constants.py
+│
+├── db/
+│   ├── schema.sql
+│   ├── migrations/
+│   ├── models.py
+│   ├── fts.py
+│   └── queries.py
+│
+├── services/
+│   ├── bridge_client.py
+│   ├── sync_service.py
+│   ├── media_service.py
+│   ├── webhook_service.py
+│   └── search_service.py
+│
+├── api/
+│   ├── app.py
+│   └── routes/
+│
+├── workers/
+│   ├── event_worker.py
+│   ├── media_worker.py
+│   └── webhook_worker.py
+│
+├── utils/
+│
+└── main.py
