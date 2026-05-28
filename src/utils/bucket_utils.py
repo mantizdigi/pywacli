@@ -1,4 +1,4 @@
-from db.bucket_connection import conection_to_s3 ,create_bucket_if_not_exists
+from src.db.bucket_connection import conection_to_s3 ,create_bucket_if_not_exists
 
 s3_client = conection_to_s3()
 

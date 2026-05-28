@@ -30,8 +30,5 @@ auth/
 package-lock.json
 package.json
 
-# Media
-media/
 
-# auth directories
-auth/
+media/

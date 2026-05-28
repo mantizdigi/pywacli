@@ -6,25 +6,18 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import websockets
 import asyncio
 import json
-
-from db.database import (
-    create_table, 
-    save_message ,
-    create_edit_table,
+from db.database import save_conversation
+from src.db.init_db import init_database
+from src.db.database import (
+    save_message,
+    save_conversation,
     save_edited_message,
-    create_status_table,save_status,
-    create_reactions_table,
+    save_media_handshake,
+    save_media_table,
     save_reaction,
-    create_media_table,
-    create_media_handshake_table,
+    save_status
 )
-
-create_table()
-create_edit_table()
-create_status_table()
-create_reactions_table()
-create_media_table()
-create_media_handshake_table()
+init_database()
 
 async def main():
     uri ="ws://localhost:3000/"
@@ -69,6 +62,8 @@ async def main():
                 except Exception as e:
                     print(f"❌ Error saving status: {e}")   
 
+            elif data['event'] == "conversation.new":
+                save_conversation(data['data'])
 
             # Media Events
             elif data['event'] == "media.new":
@@ -76,8 +71,8 @@ async def main():
                 try:
                     media_data = data['data']
                     print("📦 New media received:", media_data)
-                    from utils.bucket_utils import upload_file_to_s3
-                    from db.database import (
+                    from src.utils.bucket_utils import upload_file_to_s3
+                    from src.db.database import (
                         save_media_table,
                         save_media_handshake
                     )

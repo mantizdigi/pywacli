@@ -1,12 +1,22 @@
 import sqlite3
 import logging
+import os
 
 
 logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
 
-# DATABASE CONNECTION
-conn = sqlite3.connect("pywacli.db")
+
+BASE_DIR = os.path.dirname(
+    os.path.dirname(__file__)
+)
+
+DB_PATH = os.path.join(
+    BASE_DIR,
+    "pywacli.db"
+)
+
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 
@@ -45,7 +55,6 @@ def create_table():
         logger.error("Error creating table: %s", e)
 
         return False
-
 
 # SAVE MESSAGE
 def save_message(data):
@@ -97,7 +106,6 @@ def save_message(data):
 
         return False
 
-
 def create_edit_table():
 
     sql="""
@@ -118,7 +126,6 @@ def create_edit_table():
     except Exception as e:
         logger.error("Error creating edits table: %s", e)
         return False
-
 
 def save_edited_message(data):
     sql = """
@@ -147,7 +154,6 @@ def save_edited_message(data):
         logger.error("Error saving edited message: %s", e)
         return False
     
-
 def create_status_table():
 
     sql = """
@@ -209,7 +215,6 @@ def save_status(data):
         logger.error("Error saving status: %s", e)
         return False
     
-
 def create_reactions_table():
 
     sql = """
@@ -424,5 +429,126 @@ def save_media_handshake(data):
     except Exception as e:
 
         print(f"❌ Error saving handshake: {e}")
+
+        return False
+
+
+def create_conversations_table():
+
+    sql = """
+        CREATE TABLE IF NOT EXISTS conversations (
+
+            conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            message_id TEXT,
+
+            jid TEXT,
+
+            message_type TEXT,
+
+            text TEXT,
+
+            media_type TEXT,
+
+            media_mimetype TEXT,
+
+            file_name TEXT,
+
+            file_path TEXT,
+
+            push_name TEXT,
+
+            from_me INTEGER DEFAULT 0,
+
+            participant TEXT,
+
+            is_status INTEGER DEFAULT 0,
+
+            timestamp INTEGER
+        )
+    """
+
+    try:
+
+        cursor.execute(sql)
+
+        conn.commit()
+
+        print("✅ conversations table ready")
+
+        return True
+
+    except Exception as e:
+
+        print(f"❌ Error creating conversations table: {e}")
+
+        return False
+
+def save_conversation(data):
+
+    sql = """
+        INSERT INTO conversations (
+
+            message_id,
+            jid,
+            message_type,
+            text,
+            media_type,
+            media_mimetype,
+            file_name,
+            file_path,
+            push_name,
+            from_me,
+            participant,
+            is_status,
+            timestamp
+
+        )
+
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+
+    try:
+
+        values = (
+
+            data.get("id"),
+
+            data.get("jid"),
+
+            data.get("messageType"),
+
+            data.get("text"),
+
+            data.get("mediaType"),
+
+            data.get("mimeType"),
+
+            data.get("fileName"),
+
+            data.get("filePath"),
+
+            data.get("pushName"),
+
+            1 if data.get("fromMe") else 0,
+
+            data.get("participant"),
+
+            1 if data.get("isStatus") else 0,
+
+            data.get("timestamp")
+        )
+
+        cursor.execute(sql, values)
+
+        conn.commit()
+
+        print("✅ Conversation saved")
+
+        return cursor.lastrowid
+
+    except Exception as e:
+
+        print(f"❌ Error saving conversation: {e}")
 
         return False

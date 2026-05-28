@@ -166,6 +166,28 @@ async function startSock() {
                             timestamp:Date.now()
                         })
 
+
+                        broadcastEvent("conversation.new", {
+                                id: msg.key.id,
+                                jid: msg.key.remoteJid,
+                                messageType: "media",
+                                text:
+                                    image?.caption ||
+                                    video?.caption ||
+                                    "",
+
+                                mediaType,
+                                mimeType,
+                                fileName,
+                                filePath,
+                                pushName: msg.pushName,
+                                fromMe: msg.key.fromMe,
+                                participant: msg.key.participant,
+                                isStatus:
+                                    msg.key.remoteJid === "status@broadcast",
+                                timestamp: Date.now()
+                            })
+
                         console.log("Media downloaded:", filePath)
                     }
 
@@ -201,6 +223,16 @@ async function startSock() {
                             Date.now()
                     }
 
+                    broadcastEvent("conversation.new", {
+                        ...payload,
+                        messageType: "text",
+                        mediaType: null,
+                        mimeType: null,
+                        fileName: null,
+                        filePath: null,
+                        isStatus
+                    })
+                    
                     // STATUS EVENT
                     if (isStatus) {
 
