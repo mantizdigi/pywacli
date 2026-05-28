@@ -12,7 +12,7 @@ from rich.syntax import Syntax
 from rich.align import Align
 from rich.box import ROUNDED, HEAVY, DOUBLE, MINIMAL
 
-from cli.config_manager import (
+from src.cli.config_manager import (
     load_config, save_config, config_exists,
     section_exists, delete_section,
     add_media_entry, update_media_entry, delete_media_entry,

@@ -1,12 +1,12 @@
 import sys
 import os
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import websockets
 import asyncio
 import json
-from db.database import save_conversation
+from src.db.database import save_conversation
 from src.db.init_db import init_database
 from src.db.database import (
     save_message,
@@ -72,79 +72,85 @@ async def main():
                     media_data = data['data']
                     print("📦 New media received:", media_data)
                     from src.utils.bucket_utils import upload_file_to_s3
+                    from src.utils.local_utils import store_media_local
                     from src.db.database import (
                         save_media_table,
                         save_media_handshake
                     )
-                    import os 
-                    
+                    import shutil
+                    import os
+
                     media_id = save_media_table(media_data)
 
                     if not media_id:
                         print("Failed to save media metadata to database.")
                         continue
 
-                    BUCKET_NAME = "whatsapp-other"
-                    media_type = media_data.get("mediaType")
+                    media_type = media_data.get("mediaType", "").lower()
 
-                    if media_type == "image":
-                        BUCKET_NAME = "whatsapp-media-image"
+                    from src.cli.config_manager import load_config
+                    config = load_config()
+                    entries = config.get("media_storage", {}).get("entries", [])
 
-                    elif media_type == "video":
-                        BUCKET_NAME = "whatsapp-media-video"
+                    any_success = False
 
-                    elif media_type == "document":
-                        BUCKET_NAME = "whatsapp-media-document"
-                    media_type = media_data.get("mediaType")
-                    BUCKET_NAME = "whatsapp-other"
+                    for entry in entries:
+                        provider = entry.get("provider")
+                        type_field = f"store_{media_type}"
+                        if not entry.get(type_field, False):
+                            continue
 
-                    BUCKET_NAME ="other"
-                    if data['data']['mediaType'] in ["image"]:
-                        BUCKET_NAME = "whatsapp-media-image"
-                    
-                    status = upload_file_to_s3(
-                        file_path=data['data']['filePath'],
-                        object_name=data['data']['fileName'],
-                        bucket_name=BUCKET_NAME
-                    )
-                    print(f"Upload status: {status}")
-                    if status:
-                        save_media_handshake({
-                            "media_id": media_id,
-                            "sync": 1,
-                            "failure_reason": None
-                        })
+                        if provider in ("s3", "r2"):
+                            bucket_name = entry.get("bucket_name", "whatsapp-media")
+                            object_name = f"{media_type}/{data['data']['fileName']}"
+                            status = upload_file_to_s3(
+                                file_path=data['data']['filePath'],
+                                object_name=object_name,
+                                bucket_name=bucket_name,
+                                entry=entry
+                            )
+                        elif provider == "local":
+                            dest_dir = os.path.join(
+                                entry.get("local_path", "./media"), media_type
+                            )
+                            status = store_media_local(
+                                file_path=data['data']['filePath'],
+                                dest_dir=dest_dir,
+                                entry=entry
+                            )
+                        else:
+                            continue
 
-                        print("✅ Uploaded to S3")
-
-                        # DELETE LOCAL FILE
-                        if os.path.exists(media_data['filePath']):
-                            os.remove(media_data['filePath'])
-                            print("🗑 Local file deleted")
+                        if status:
+                            any_success = True
+                            save_media_handshake({
+                                "media_id": media_id,
+                                "sync": 1,
+                                "failure_reason": None
+                            })
+                            print(f"✅ Stored via {provider} (entry #{entry.get('id')})")
                         else:
                             save_media_handshake({
                                 "media_id": media_id,
                                 "sync": 0,
-                                "failure_reason": "S3 Upload Failed"
+                                "failure_reason": f"{provider.upper()} Upload Failed"
                             })
-                            print("❌ Upload failed")
-                    else:
+                            print(f"❌ Failed via {provider} (entry #{entry.get('id')})")
+
+                    if any_success and os.path.exists(data['data']['filePath']):
+                        os.remove(data['data']['filePath'])
+                        print("🗑 Local file deleted")
+
+                except Exception as e:
+                    print(f"❌ Error handling media.new event: {e}")
+                    try:
                         save_media_handshake({
                             "media_id": media_id,
                             "sync": 0,
-                            "failure_reason": "S3 Upload Failed"
+                            "failure_reason": str(e)
                         })
-                        print("❌ Upload failed")
-                except Exception as e:
-                    print(f"❌ Error handling media.new event: {e}")
-                    save_media_handshake({
-                    "media_id": media_id,
-                    "sync": 0,
-                    "failure_reason": "S3 Upload Failed"
-                    })                       
-                
-                # Handle media saving logic here (e.g., save to S3 or local storage)
-                # You can use the data['data'] to get details about the media and save it accordingly
+                    except Exception:
+                        pass
 
 if __name__ == "__main__":
     asyncio.run(main())

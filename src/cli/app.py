@@ -1,7 +1,7 @@
-from cli.config_manager import config_exists
-from cli.configuration import run_config_wizard
-from cli.ui.dashboard import run_dashboard
-from db.init_db import init_database
+from src.cli.config_manager import config_exists
+from src.cli.configuration import run_config_wizard
+from src.cli.ui.dashboard import run_dashboard
+from src.db.init_db import init_database
 
 
 def main():

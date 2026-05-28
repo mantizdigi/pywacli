@@ -1,8 +1,9 @@
-import typer
+import sys
+import os
 
-def main(name:str="Prem Raj" ,age:int =20):
-    print(f"Hello {name}, you are {age} years old")
+sys.path.append(os.path.dirname(__file__))
 
+from src.cli.__main__ import app
 
-if __name__ =="__main__":
-    typer.run(main)
+if __name__ == "__main__":
+    app()
