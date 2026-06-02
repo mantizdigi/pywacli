@@ -7,9 +7,9 @@ from rich.box import ROUNDED, HEAVY, MINIMAL
 from rich.prompt import Prompt
 from datetime import datetime, timezone
 
-from src.db.retriver_db import get_media_types, get_media_by_type, get_media_by_id
-from src.cli.config_manager import load_config
-from src.utils.bucket_utils import download_file_from_s3
+from pywacli.db.retriver_db import get_media_types, get_media_by_type, get_media_by_id
+from pywacli.cli.config_manager import load_config
+from pywacli.utils.bucket_utils import download_file_from_s3
 
 console = Console()
 
@@ -211,7 +211,7 @@ def run_media_viewer():
         menu.add_column("Option", style="bold white", width=20)
         menu.add_column("Count", style="dim white")
 
-        from src.db.retriver_db import get_total_media
+        from pywacli.db.retriver_db import get_total_media
         total = get_total_media()
         menu.add_row("1", "Images", "")
         menu.add_row("2", "Videos", "")

@@ -8,14 +8,14 @@ from rich.box import HEAVY, ROUNDED
 from rich.align import Align
 import time
 
-from src.db.retriver_db import (
+from pywacli.db.retriver_db import (
     get_total_messages,
     get_total_statuses,
     get_total_reactions,
     get_total_media,
     get_recent_messages
 )
-from src.cli.config_manager import load_config
+from pywacli.cli.config_manager import load_config
 
 console = Console()
 

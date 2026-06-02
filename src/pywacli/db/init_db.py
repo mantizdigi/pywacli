@@ -1,4 +1,4 @@
-from src.db.database import (
+from pywacli.db.database import (
     create_table,
     create_edit_table,
     create_status_table,

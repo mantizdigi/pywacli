@@ -1,4 +1,4 @@
-from src.db.bucket_connection import conection_to_s3, create_bucket_if_not_exists
+from pywacli.db.bucket_connection import conection_to_s3, create_bucket_if_not_exists
 
 
 _s3_clients = {}

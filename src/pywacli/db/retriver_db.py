@@ -1,22 +1,17 @@
 import sqlite3
 import logging
-import os
+
+from pywacli.cli.config_manager import get_db_path
 
 
-logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
 
 
-BASE_DIR = os.path.dirname(
-    os.path.dirname(__file__)
-)
+# Same configured path the writer (database.py) uses, so the dashboard reads
+# the database the services actually write to.
+DB_PATH = get_db_path()
 
-DB_PATH = os.path.join(
-    BASE_DIR,
-    "pywacli.db"
-)
-
-conn = sqlite3.connect(DB_PATH)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 
 

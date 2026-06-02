@@ -1,23 +1,32 @@
 import sqlite3
 import logging
-import os
+
+from pywacli.cli.config_manager import get_db_path, setup_logging
 
 
-logging.basicConfig(level=logging.INFO) 
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
-BASE_DIR = os.path.dirname(
-    os.path.dirname(__file__)
-)
+# Resolved from config['database']['path'] (see config_manager.get_db_path),
+# so the DB lands where the user configured it — not inside the installed
+# package directory.
+DB_PATH = get_db_path()
 
-DB_PATH = os.path.join(
-    BASE_DIR,
-    "pywacli.db"
-)
-
-conn = sqlite3.connect(DB_PATH)
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
+
+
+def _ensure_column(table: str, column: str, decl: str):
+    """Add a column to an existing table if it's missing (lightweight migration)."""
+    try:
+        cursor.execute(f"PRAGMA table_info({table})")
+        existing = {row[1] for row in cursor.fetchall()}
+        if column not in existing:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            conn.commit()
+    except Exception as e:
+        logger.error("Error ensuring column %s.%s: %s", table, column, e)
 
 
 # CREATE TABLE
@@ -315,6 +324,8 @@ def create_media_table():
             file_path TEXT,
             push_name TEXT,
             from_me INTEGER DEFAULT 0,
+            is_status INTEGER DEFAULT 0,
+            is_view_once INTEGER DEFAULT 0,
             timestamp INTEGER DEFAULT 0
         )
     """
@@ -323,6 +334,9 @@ def create_media_table():
 
         cursor.execute(sql)
         conn.commit()
+        # Migrate older DBs that predate these columns.
+        _ensure_column("media", "is_status", "INTEGER DEFAULT 0")
+        _ensure_column("media", "is_view_once", "INTEGER DEFAULT 0")
         print("✅ media table ready")
         return True
 
@@ -367,9 +381,11 @@ def save_media_table(data):
             file_path,
             push_name,
             from_me,
+            is_status,
+            is_view_once,
             timestamp
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -382,7 +398,9 @@ def save_media_table(data):
             data.get("fileName"),
             data.get("filePath"),
             data.get("pushName"),
-            data.get("fromMe"),
+            1 if data.get("fromMe") else 0,
+            1 if data.get("isStatus") else 0,
+            1 if data.get("isViewOnce") else 0,
             data.get("timestamp")
         )
 
@@ -464,6 +482,8 @@ def create_conversations_table():
 
             is_status INTEGER DEFAULT 0,
 
+            is_view_once INTEGER DEFAULT 0,
+
             timestamp INTEGER
         )
     """
@@ -473,6 +493,9 @@ def create_conversations_table():
         cursor.execute(sql)
 
         conn.commit()
+
+        # Migrate older DBs that predate this column.
+        _ensure_column("conversations", "is_view_once", "INTEGER DEFAULT 0")
 
         print("✅ conversations table ready")
 
@@ -501,11 +524,12 @@ def save_conversation(data):
             from_me,
             participant,
             is_status,
+            is_view_once,
             timestamp
 
         )
 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -535,6 +559,8 @@ def save_conversation(data):
             data.get("participant"),
 
             1 if data.get("isStatus") else 0,
+
+            1 if data.get("isViewOnce") else 0,
 
             data.get("timestamp")
         )

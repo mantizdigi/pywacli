@@ -1,6 +1,5 @@
-typer[all]
+typer>=0.12
 rich
 websockets
-asyncio
 boto3
-dotenv
+python-dotenv

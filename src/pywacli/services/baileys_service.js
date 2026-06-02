@@ -26,6 +26,49 @@ const{
 } = require("baileys")
 
 
+// Unwrap WhatsApp message containers so we can reach the real media payload.
+// Handles ephemeral (disappearing) wrappers, view-once wrappers (all 3
+// variants), and document-with-caption. Reports whether it was view-once.
+function unwrapMessage(message) {
+
+    let isViewOnce = false
+    let m = message
+
+    if (!m) return { content: null, isViewOnce }
+
+    // Disappearing-message wrapper
+    if (m.ephemeralMessage?.message) {
+        m = m.ephemeralMessage.message
+    }
+
+    // View-once wrappers (v1, v2, v2 extension)
+    const viewOnce =
+        m.viewOnceMessage ||
+        m.viewOnceMessageV2 ||
+        m.viewOnceMessageV2Extension
+
+    if (viewOnce?.message) {
+        isViewOnce = true
+        m = viewOnce.message
+    }
+
+    // Document sent with a caption wraps the real documentMessage
+    if (m.documentWithCaptionMessage?.message) {
+        m = m.documentWithCaptionMessage.message
+    }
+
+    return { content: m, isViewOnce }
+}
+
+
+// "audio/ogg; codecs=opus" -> "ogg"
+function extFromMime(mimeType) {
+    if (!mimeType) return "bin"
+    const subtype = mimeType.split("/")[1] || "bin"
+    return subtype.split(";")[0].trim() || "bin"
+}
+
+
 async function startSock() {
 
     const {
@@ -113,37 +156,48 @@ async function startSock() {
             for (const msg of messages) {
                 try {
                     
-                    const image = msg.message?.imageMessage
-                    const video = msg.message?.videoMessage
-                    const document = msg.message?.documentMessage
+                    const { content, isViewOnce } = unwrapMessage(msg.message)
 
-                    let mediaType = null 
+                    const image = content?.imageMessage
+                    const video = content?.videoMessage
+                    const audio = content?.audioMessage
+                    const document = content?.documentMessage
+
+                    let mediaType = null
 
                     if (image) mediaType = "image"
                     else if (video) mediaType = "video"
+                    else if (audio) mediaType = "audio"
                     else if (document) mediaType = "document"
+
+                    const isStatus =
+                        msg.key.remoteJid === "status@broadcast"
 
                     console.log("Sender:", msg.key.remoteJid)
                     console.log("Message ID:", msg.key.id)
                     console.log("Media Type:", mediaType || "none")
+                    if (isViewOnce) console.log("👁 View-once media")
 
                     if (mediaType){
 
-                        const buffer = 
+                        // Download from the unwrapped message so view-once /
+                        // ephemeral media resolves correctly.
+                        const buffer =
                             await downloadMediaMessage(
-                                msg,
+                                { ...msg, message: content },
                                 "buffer",
                                 {},
                                 {
                                    logger: P({level:"silent"}),
-                                   reuploadRequest:sock.updateMediaMessage 
+                                   reuploadRequest:sock.updateMediaMessage
                                 }
                             )
                         const mimeType =
                             image?.mimetype ||
                             video?.mimetype ||
+                            audio?.mimetype ||
                             document?.mimetype
-                        const extenstion = mimeType.split("/")[1] || "bin"
+                        const extenstion = extFromMime(mimeType)
                         const fileName = `${msg.key.id}.${extenstion}`
                         const folder = `media/${mediaType}s`
 
@@ -156,10 +210,12 @@ async function startSock() {
                         broadcastEvent("media.new",{
                             jid: msg.key.remoteJid,
                             id:msg.key.id,
-                            fileName, 
+                            fileName,
                             filePath,
                             mimeType,
                             mediaType,
+                            isStatus,
+                            isViewOnce,
                             pushName:msg.pushName,
                             fromMe:msg.key.fromMe,
                             participant:msg.key.participant,
@@ -183,8 +239,8 @@ async function startSock() {
                                 pushName: msg.pushName,
                                 fromMe: msg.key.fromMe,
                                 participant: msg.key.participant,
-                                isStatus:
-                                    msg.key.remoteJid === "status@broadcast",
+                                isStatus,
+                                isViewOnce,
                                 timestamp: Date.now()
                             })
 
@@ -195,8 +251,7 @@ async function startSock() {
 
                     const jid = msg.key.remoteJid
 
-                    const isStatus =
-                        jid === "status@broadcast"
+                    // isStatus already computed above (msg.key.remoteJid)
 
                     // TEXT EXTRACTION
                     const text =

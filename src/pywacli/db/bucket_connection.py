@@ -1,6 +1,6 @@
 import boto3
 from botocore.exceptions import ClientError
-from src.cli.config_manager import load_config
+from pywacli.cli.config_manager import load_config
 
 
 def create_bucket_if_not_exists(s3_client, bucket_name):

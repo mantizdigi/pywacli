@@ -6,9 +6,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import websockets
 import asyncio
 import json
-from src.db.database import save_conversation
-from src.db.init_db import init_database
-from src.db.database import (
+from pywacli.db.database import save_conversation
+from pywacli.db.init_db import init_database
+from pywacli.db.database import (
     save_message,
     save_conversation,
     save_edited_message,
@@ -71,9 +71,9 @@ async def main():
                 try:
                     media_data = data['data']
                     print("📦 New media received:", media_data)
-                    from src.utils.bucket_utils import upload_file_to_s3
-                    from src.utils.local_utils import store_media_local
-                    from src.db.database import (
+                    from pywacli.utils.bucket_utils import upload_file_to_s3
+                    from pywacli.utils.local_utils import store_media_local
+                    from pywacli.db.database import (
                         save_media_table,
                         save_media_handshake
                     )
@@ -87,8 +87,10 @@ async def main():
                         continue
 
                     media_type = media_data.get("mediaType", "").lower()
+                    is_status = bool(media_data.get("isStatus"))
+                    is_view_once = bool(media_data.get("isViewOnce"))
 
-                    from src.cli.config_manager import load_config
+                    from pywacli.cli.config_manager import load_config
                     config = load_config()
                     entries = config.get("media_storage", {}).get("entries", [])
 
@@ -96,13 +98,29 @@ async def main():
 
                     for entry in entries:
                         provider = entry.get("provider")
-                        type_field = f"store_{media_type}"
-                        if not entry.get(type_field, False):
-                            continue
+
+                        # Decide whether this entry wants this item and which
+                        # sub-folder / key-prefix it belongs under. Status and
+                        # view-once media get their own top-level folders, then
+                        # split by media type (e.g. status/image, viewonce/video).
+                        if is_status:
+                            if not entry.get("store_status", False):
+                                continue
+                            category = "status"
+                        elif is_view_once:
+                            if not entry.get("store_view_once", False):
+                                continue
+                            category = "viewonce"
+                        else:
+                            if not entry.get(f"store_{media_type}", False):
+                                continue
+                            category = None
+
+                        rel_parts = [p for p in (category, media_type) if p]
 
                         if provider in ("s3", "r2"):
                             bucket_name = entry.get("bucket_name", "whatsapp-media")
-                            object_name = f"{media_type}/{data['data']['fileName']}"
+                            object_name = "/".join(rel_parts + [data['data']['fileName']])
                             status = upload_file_to_s3(
                                 file_path=data['data']['filePath'],
                                 object_name=object_name,
@@ -111,7 +129,7 @@ async def main():
                             )
                         elif provider == "local":
                             dest_dir = os.path.join(
-                                entry.get("local_path", "./media"), media_type
+                                entry.get("local_path", "./media"), *rel_parts
                             )
                             status = store_media_local(
                                 file_path=data['data']['filePath'],

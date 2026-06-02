@@ -12,7 +12,7 @@ from rich.syntax import Syntax
 from rich.align import Align
 from rich.box import ROUNDED, HEAVY, DOUBLE, MINIMAL
 
-from src.cli.config_manager import (
+from pywacli.cli.config_manager import (
     load_config, save_config, config_exists,
     section_exists, delete_section,
     add_media_entry, update_media_entry, delete_media_entry,
@@ -157,7 +157,10 @@ def show_media_action_menu(entry: dict, entry_index: int, total: int):
     tbl.add_column("Value", style=VALUE_STYLE)
     tbl.add_row("Store Images", "✅ Yes" if entry.get("store_image") else "❌ No")
     tbl.add_row("Store Videos", "✅ Yes" if entry.get("store_video") else "❌ No")
+    tbl.add_row("Store Audio", "✅ Yes" if entry.get("store_audio") else "❌ No")
     tbl.add_row("Store Documents", "✅ Yes" if entry.get("store_document") else "❌ No")
+    tbl.add_row("Store Status", "✅ Yes" if entry.get("store_status") else "❌ No")
+    tbl.add_row("Store View-Once", "✅ Yes" if entry.get("store_view_once") else "❌ No")
     provider = entry.get("provider", "")
     provider_labels = {"s3": "AWS S3", "r2": "Cloudflare R2", "local": "Local Path"}
     tbl.add_row("Provider", provider_labels.get(provider, provider.upper()))
@@ -233,11 +236,25 @@ def configure_media_entry(existing: dict = None) -> dict:
     entry["store_video"] = Confirm.ask(
         "  Store videos?", default=entry.get("store_video", False)
     )
+    entry["store_audio"] = Confirm.ask(
+        "  Store audio (voice notes & audio files)?", default=entry.get("store_audio", False)
+    )
     entry["store_document"] = Confirm.ask(
         "  Store documents?", default=entry.get("store_document", False)
     )
+    entry["store_status"] = Confirm.ask(
+        "  Store status updates (in a separate 'status' folder)?",
+        default=entry.get("store_status", False)
+    )
+    entry["store_view_once"] = Confirm.ask(
+        "  Store view-once media (in a separate 'viewonce' folder)?",
+        default=entry.get("store_view_once", False)
+    )
 
-    if not any([entry["store_image"], entry["store_video"], entry["store_document"]]):
+    if not any([
+        entry["store_image"], entry["store_video"], entry["store_audio"],
+        entry["store_document"], entry["store_status"], entry["store_view_once"],
+    ]):
         print_warn("No media types selected. Storage entry will be created but nothing will be stored.")
         if not confirm_action("Continue with no media types selected?", default=False):
             return None
@@ -484,7 +501,10 @@ def show_summary():
                 types = []
                 if e.get("store_image"): types.append("📷")
                 if e.get("store_video"): types.append("🎬")
+                if e.get("store_audio"): types.append("🎵")
                 if e.get("store_document"): types.append("📄")
+                if e.get("store_status"): types.append("📸")
+                if e.get("store_view_once"): types.append("👁")
                 status_text.append(f"\n      #{e['id']} {prov_label} {' '.join(types)}", style=DIM_STYLE)
             summary_table.add_row(label, status_text)
         elif exists:

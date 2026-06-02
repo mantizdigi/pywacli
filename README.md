@@ -197,30 +197,31 @@ pywacli/
 ├── package.json                     # Node.js dependencies
 ├── requirements.txt                 # Python dependencies
 ├── src/
-│   ├── cli/
-│   │   ├── __init__.py
-│   │   ├── __main__.py              # Typer CLI app & menu
-│   │   ├── app.py                   # App orchestrator
-│   │   ├── config_manager.py        # ~/.pywacli/config.json management
-│   │   ├── configuration.py         # Interactive setup wizard
-│   │   └── ui/
-│   │       ├── dashboard.py         # Live Rich dashboard
-│   │       ├── media_viewer.py      # Media browser & downloader
-│   │       ├── tables.py            # (reserved)
-│   │       └── live_feed.py         # (reserved)
-│   ├── db/
-│   │   ├── database.py              # SQLite schema & CRUD
-│   │   ├── init_db.py               # Table initializer
-│   │   ├── retriver_db.py           # Read queries
-│   │   └── bucket_connection.py     # S3/R2 connection manager
-│   ├── services/
-│   │   ├── baileys_service.js       # WhatsApp Baileys client
-│   │   ├── ws_server.js             # WebSocket server
-│   │   ├── session_manager.js       # Baileys socket singleton
-│   │   └── websocket_services.py    # Python WebSocket consumer
-│   └── utils/
-│       ├── bucket_utils.py          # S3 upload/download helpers
-│       └── local_utils.py           # Local file storage
+├── pywacli/
+│     ├── cli/
+│     ├── __init__.py
+│     ├── __main__.py              # Typer CLI app & menu
+│     ├── app.py                   # App orchestrator
+│     ├── config_manager.py        # ~/.pywacli/config.json management
+│     ├── configuration.py         # Interactive setup wizard
+│     └── ui/
+│     │    ├── dashboard.py         # Live Rich dashboard
+│     │    ├── media_viewer.py      # Media browser & downloader
+│     │    ├── tables.py            # (reserved)
+│     │    └── live_feed.py         # (reserved)
+│     ├── db/
+│     │   ├── database.py              # SQLite schema & CRUD
+│     │   ├── init_db.py               # Table initializer
+│     │   ├── retriver_db.py           # Read queries
+│     │   └── bucket_connection.py     # S3/R2 connection manager
+│     ├── services/
+│     │   ├── baileys_service.js       # WhatsApp Baileys client
+│     │   ├── ws_server.js             # WebSocket server
+│     │   ├── session_manager.js       # Baileys socket singleton
+│     │   └── websocket_services.py    # Python WebSocket consumer
+│     └── utils/
+│          ├── bucket_utils.py          # S3 upload/download helpers
+│          └── local_utils.py           # Local file storage
 ├── .env.example                     # Environment template
 └── LICENSE                          # MIT
 ```
