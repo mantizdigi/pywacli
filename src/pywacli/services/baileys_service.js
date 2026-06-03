@@ -26,46 +26,26 @@ const{
 } = require("baileys")
 
 
-// Unwrap WhatsApp message containers so we can reach the real media payload.
-// Handles ephemeral (disappearing) wrappers, view-once wrappers (all 3
-// variants), and document-with-caption. Reports whether it was view-once.
-function unwrapMessage(message) {
+const AUTH_DIR = "./auth"
 
-    let isViewOnce = false
-    let m = message
+// Wipe stale credentials so the next startSock() begins a fresh
+// pairing and Baileys emits a new QR (used after a logout / when
+// the saved session is no longer valid).
+function clearAuthState() {
 
-    if (!m) return { content: null, isViewOnce }
+    try {
 
-    // Disappearing-message wrapper
-    if (m.ephemeralMessage?.message) {
-        m = m.ephemeralMessage.message
+        fs.rmSync(AUTH_DIR, {
+            recursive: true,
+            force: true
+        })
+
+        console.log("🧹 Cleared auth state")
+
+    } catch (err) {
+
+        console.log("❌ Failed to clear auth state:", err)
     }
-
-    // View-once wrappers (v1, v2, v2 extension)
-    const viewOnce =
-        m.viewOnceMessage ||
-        m.viewOnceMessageV2 ||
-        m.viewOnceMessageV2Extension
-
-    if (viewOnce?.message) {
-        isViewOnce = true
-        m = viewOnce.message
-    }
-
-    // Document sent with a caption wraps the real documentMessage
-    if (m.documentWithCaptionMessage?.message) {
-        m = m.documentWithCaptionMessage.message
-    }
-
-    return { content: m, isViewOnce }
-}
-
-
-// "audio/ogg; codecs=opus" -> "ogg"
-function extFromMime(mimeType) {
-    if (!mimeType) return "bin"
-    const subtype = mimeType.split("/")[1] || "bin"
-    return subtype.split(";")[0].trim() || "bin"
 }
 
 
@@ -74,7 +54,7 @@ async function startSock() {
     const {
         state,
         saveCreds
-    } = await useMultiFileAuthState("./auth")
+    } = await useMultiFileAuthState(AUTH_DIR)
 
     const sock = makeWASocket({
         auth: state,
@@ -122,17 +102,33 @@ async function startSock() {
         // DISCONNECTED
         if (connection === "close") {
 
-            const shouldReconnect =
+            const statusCode =
                 lastDisconnect?.error?.output?.statusCode
-                !== DisconnectReason.loggedOut
+
+            const loggedOut =
+                statusCode === DisconnectReason.loggedOut
 
             broadcastEvent("connection.close", {
-                reason: lastDisconnect?.error?.output?.statusCode
+                reason: statusCode,
+                loggedOut
             })
 
             console.log("❌ Disconnected")
 
-            if (shouldReconnect) {
+            if (loggedOut) {
+
+                // Session is dead (logged out from the phone).
+                // Drop the stale creds and restart so a brand new
+                // QR is generated for re-pairing.
+                console.log("🚪 Logged out — clearing session and showing a new QR...")
+
+                clearAuthState()
+
+                setTimeout(() => {
+                    startSock()
+                }, 3000)
+
+            } else {
 
                 console.log("♻️ Reconnecting...")
 
