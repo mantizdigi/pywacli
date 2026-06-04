@@ -55,6 +55,8 @@ def create_table():
 
         conn.commit()
 
+        _ensure_column("messages", "phone_number", "TEXT")
+
         print("✅ messages table ready")
 
         return True
@@ -75,9 +77,10 @@ def save_message(data):
             text,
             from_me,
             push_name,
+            phone_number,
             timestamp
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -92,6 +95,8 @@ def save_message(data):
 
         push_name = data.get("pushName", "")
 
+        phone_number = data.get("phoneNumber", "")
+
         timestamp = data.get("timestamp", 0)
 
         cursor.execute(sql, (
@@ -100,6 +105,7 @@ def save_message(data):
             text,
             from_me,
             push_name,
+            phone_number,
             timestamp
         ))
 
@@ -181,6 +187,7 @@ def create_status_table():
 
         cursor.execute(sql)
         conn.commit()
+        _ensure_column("statuses", "phone_number", "TEXT")
         print("✅ statuses table ready")
         return True
 
@@ -197,10 +204,11 @@ def save_status(data):
             jid,
             text,
             push_name,
+            phone_number,
             from_me,
             timestamp
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -211,6 +219,7 @@ def save_status(data):
             data.get("jid"),
             data.get("text"),
             data.get("pushName"),
+            data.get("phoneNumber", ""),
             1 if data.get("fromMe") else 0,
             data.get("timestamp")
         ))
@@ -337,6 +346,7 @@ def create_media_table():
         # Migrate older DBs that predate these columns.
         _ensure_column("media", "is_status", "INTEGER DEFAULT 0")
         _ensure_column("media", "is_view_once", "INTEGER DEFAULT 0")
+        _ensure_column("media", "phone_number", "TEXT")
         print("✅ media table ready")
         return True
 
@@ -380,12 +390,13 @@ def save_media_table(data):
             file_name,
             file_path,
             push_name,
+            phone_number,
             from_me,
             is_status,
             is_view_once,
             timestamp
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -398,6 +409,7 @@ def save_media_table(data):
             data.get("fileName"),
             data.get("filePath"),
             data.get("pushName"),
+            data.get("phoneNumber", ""),
             1 if data.get("fromMe") else 0,
             1 if data.get("isStatus") else 0,
             1 if data.get("isViewOnce") else 0,
@@ -496,6 +508,7 @@ def create_conversations_table():
 
         # Migrate older DBs that predate this column.
         _ensure_column("conversations", "is_view_once", "INTEGER DEFAULT 0")
+        _ensure_column("conversations", "phone_number", "TEXT")
 
         print("✅ conversations table ready")
 
@@ -521,6 +534,7 @@ def save_conversation(data):
             file_name,
             file_path,
             push_name,
+            phone_number,
             from_me,
             participant,
             is_status,
@@ -529,7 +543,7 @@ def save_conversation(data):
 
         )
 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 
     try:
@@ -553,6 +567,8 @@ def save_conversation(data):
             data.get("filePath"),
 
             data.get("pushName"),
+
+            data.get("phoneNumber", ""),
 
             1 if data.get("fromMe") else 0,
 

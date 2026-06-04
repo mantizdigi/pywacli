@@ -89,6 +89,12 @@ async def main():
                     media_type = media_data.get("mediaType", "").lower()
                     is_status = bool(media_data.get("isStatus"))
                     is_view_once = bool(media_data.get("isViewOnce"))
+                    push_name = media_data.get("pushName", "Unknown")
+                    phone_number = media_data.get("phoneNumber", "")
+                    contact_phone = media_data.get("contactPhone", phone_number)
+
+                    # Build contact-based sub-folder: "pushName_contactPhone"
+                    contact_dir = f"{push_name}_{contact_phone}".strip("_ ")
 
                     from pywacli.cli.config_manager import load_config
                     config = load_config()
@@ -102,21 +108,19 @@ async def main():
                         # Decide whether this entry wants this item and which
                         # sub-folder / key-prefix it belongs under. Status and
                         # view-once media get their own top-level folders, then
-                        # split by media type (e.g. status/image, viewonce/video).
+                        # the contact-based sub-folder and media type.
                         if is_status:
                             if not entry.get("store_status", False):
                                 continue
-                            category = "status"
+                            rel_parts = ["status", contact_dir]
                         elif is_view_once:
                             if not entry.get("store_view_once", False):
                                 continue
-                            category = "viewonce"
+                            rel_parts = ["viewonce", contact_dir]
                         else:
                             if not entry.get(f"store_{media_type}", False):
                                 continue
-                            category = None
-
-                        rel_parts = [p for p in (category, media_type) if p]
+                            rel_parts = [f"{media_type}s", contact_dir]
 
                         if provider in ("s3", "r2"):
                             bucket_name = entry.get("bucket_name", "whatsapp-media")

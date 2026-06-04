@@ -17,16 +17,49 @@ const {
 const P = require("pino")
 const qrcode = require("qrcode-terminal")
 
-// DownloadMedia  
-
 const fs = require("fs")
 const path = require("path")
+const os = require("os")
 const{
-    downloadMediaMessage
+    normalizeMessageContent,
+    downloadContentFromMessage
 } = require("baileys")
 
+function extractPhone(jid) {
+    if (!jid) return ""
+    return jid.split("@")[0]
+}
 
-const AUTH_DIR = "./auth"
+function extFromMime(mime) {
+    if (!mime) return "bin"
+    const subtype = mime.split("/")[1]?.split(";")[0]
+    if (!subtype) return "bin"
+    switch (subtype) {
+        case "jpeg":
+        case "x-jpeg":
+            return "jpg"
+        case "png":
+            return "png"
+        case "webp":
+            return "webp"
+        case "mp4":
+        case "mp4v":
+            return "mp4"
+        case "ogg":
+        case "opus":
+            return "ogg"
+        case "mpeg":
+            return "mp3"
+        case "pdf":
+            return "pdf"
+        case "vnd.openxmlformats-officedocument.wordprocessingml.document":
+            return "docx"
+        default:
+            return subtype.replace(/[^a-z0-9]/gi, "") || "bin"
+    }
+}
+
+const AUTH_DIR = path.join(os.homedir(), ".pywacli", "auth")
 
 // Wipe stale credentials so the next startSock() begins a fresh
 // pairing and Baileys emits a new QR (used after a logout / when
@@ -151,51 +184,77 @@ async function startSock() {
 
             for (const msg of messages) {
                 try {
-                    
-                    const { content, isViewOnce } = unwrapMessage(msg.message)
 
-                    const image = content?.imageMessage
-                    const video = content?.videoMessage
-                    const audio = content?.audioMessage
-                    const document = content?.documentMessage
+                    const isFromMe = msg.key.fromMe
+                    const contactJid = msg.key.remoteJid
+                    const senderJid = isFromMe
+                        ? sock.user.id
+                        : (msg.key.participant || msg.key.remoteJid)
+                    const phoneNumber = extractPhone(senderJid)
+                    const contactPhone = extractPhone(contactJid)
+                    const pushName = msg.pushName || ""
 
+                    const msgContent = normalizeMessageContent(msg.message)
+                    if (!msgContent) continue
+
+                    const viewOnceMsg = msgContent.viewOnceMessage?.message
+                    const viewOnceMsgV2 = msgContent.viewOnceMessageV2?.message
+                    const viewOnceMsgV2Ext = msgContent.viewOnceMessageV2Extension?.message
+
+                    const isViewOnce = !!(viewOnceMsg || viewOnceMsgV2 || viewOnceMsgV2Ext)
+
+                    // Determine media message and type
+                    let mediaMessage = null
                     let mediaType = null
 
-                    if (image) mediaType = "image"
-                    else if (video) mediaType = "video"
-                    else if (audio) mediaType = "audio"
-                    else if (document) mediaType = "document"
+                    if (viewOnceMsg) {
+                        const type = Object.keys(viewOnceMsg)[0]
+                        mediaType = type.replace('Message', '').toLowerCase()
+                        mediaMessage = viewOnceMsg[type]
+                    } else if (viewOnceMsgV2) {
+                        const type = Object.keys(viewOnceMsgV2)[0]
+                        mediaType = type.replace('Message', '').toLowerCase()
+                        mediaMessage = viewOnceMsgV2[type]
+                    } else if (viewOnceMsgV2Ext) {
+                        const type = Object.keys(viewOnceMsgV2Ext)[0]
+                        mediaType = type.replace('Message', '').toLowerCase()
+                        mediaMessage = viewOnceMsgV2Ext[type]
+                    } else {
+                        const image = msgContent?.imageMessage
+                        const video = msgContent?.videoMessage
+                        const audio = msgContent?.audioMessage
+                        const document = msgContent?.documentMessage
+                        if (image) { mediaType = "image"; mediaMessage = image }
+                        else if (video) { mediaType = "video"; mediaMessage = video }
+                        else if (audio) { mediaType = "audio"; mediaMessage = audio }
+                        else if (document) { mediaType = "document"; mediaMessage = document }
+                    }
 
                     const isStatus =
                         msg.key.remoteJid === "status@broadcast"
 
                     console.log("Sender:", msg.key.remoteJid)
+                    console.log("Phone:", phoneNumber)
+                    console.log("PushName:", pushName)
                     console.log("Message ID:", msg.key.id)
                     console.log("Media Type:", mediaType || "none")
                     if (isViewOnce) console.log("👁 View-once media")
 
-                    if (mediaType){
+                    if (mediaMessage && mediaType) {
+                        const stream = await downloadContentFromMessage(mediaMessage, mediaType)
+                        let buffer = Buffer.from([])
+                        for await (const chunk of stream) {
+                            buffer = Buffer.concat([buffer, chunk])
+                        }
 
-                        // Download from the unwrapped message so view-once /
-                        // ephemeral media resolves correctly.
-                        const buffer =
-                            await downloadMediaMessage(
-                                { ...msg, message: content },
-                                "buffer",
-                                {},
-                                {
-                                   logger: P({level:"silent"}),
-                                   reuploadRequest:sock.updateMediaMessage
-                                }
-                            )
-                        const mimeType =
-                            image?.mimetype ||
-                            video?.mimetype ||
-                            audio?.mimetype ||
-                            document?.mimetype
-                        const extenstion = extFromMime(mimeType)
-                        const fileName = `${msg.key.id}.${extenstion}`
-                        const folder = `media/${mediaType}s`
+                        const mimeType = mediaMessage?.mimetype
+                        const extension = extFromMime(mimeType)
+                        const fileName = `${msg.key.id}.${extension}`
+                        const contactDir = `${pushName}_${contactPhone}`
+                        const mediaPlural = `${mediaType}s`
+                        const folder = isViewOnce
+                            ? `media/viewonce/${contactDir}`
+                            : `media/${mediaPlural}/${contactDir}`
 
                         fs.mkdirSync(folder, { recursive: true })
 
@@ -212,27 +271,29 @@ async function startSock() {
                             mediaType,
                             isStatus,
                             isViewOnce,
-                            pushName:msg.pushName,
+                            pushName,
+                            phoneNumber,
+                            contactPhone,
                             fromMe:msg.key.fromMe,
                             participant:msg.key.participant,
                             timestamp:Date.now()
                         })
-
 
                         broadcastEvent("conversation.new", {
                                 id: msg.key.id,
                                 jid: msg.key.remoteJid,
                                 messageType: "media",
                                 text:
-                                    image?.caption ||
-                                    video?.caption ||
+                                    mediaMessage?.caption ||
                                     "",
 
                                 mediaType,
                                 mimeType,
                                 fileName,
                                 filePath,
-                                pushName: msg.pushName,
+                                pushName,
+                                phoneNumber,
+                                contactPhone,
                                 fromMe: msg.key.fromMe,
                                 participant: msg.key.participant,
                                 isStatus,
@@ -241,13 +302,12 @@ async function startSock() {
                             })
 
                         console.log("Media downloaded:", filePath)
+                        console.log(`Downloaded view once ${mediaType} of size ${buffer.length}`)
                     }
 
                     if (!msg.message) continue
 
                     const jid = msg.key.remoteJid
-
-                    // isStatus already computed above (msg.key.remoteJid)
 
                     // TEXT EXTRACTION
                     const text =
@@ -264,8 +324,9 @@ async function startSock() {
                         jid,
                         text,
                         id: msg.key.id,
-                        pushName:
-                            msg.pushName || "",
+                        pushName,
+                        phoneNumber,
+                        contactPhone,
                         fromMe:
                             msg.key.fromMe,
                         participant:
