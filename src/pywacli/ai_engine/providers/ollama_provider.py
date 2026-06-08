@@ -6,30 +6,30 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_community.chat_message_histories import ChatMessageHistory
 
 from pywacli.ai_engine.load_history import LoadHistory
-history = LoadHistory.history()
 
 
 class OllamaProvider(ModelProviderAbstractClass):
 
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
+        self.history = LoadHistory.history()
         try:
             self.model = ChatOllama(
                 model=self.model_name,
-                temprature = self.temprature
+                temperature = self.temperature
             )
         except Exception as e:
-            print(f"Error in {e}")
+            raise RuntimeError(f"Failed to initialize Ollama: {e}") from e
     
     def generate(self,prompt:ChatPromptTemplate,chat_input):
         model_chain = prompt | self.model | StrOutputParser()
         response = model_chain.invoke({
-            "history":history.messages,
+            "history":self.history.messages,
             "input":chat_input
         })
 
-        history.add_user_message(chat_input)
-        history.add_ai_message(response)
+        self.history.add_user_message(chat_input)
+        self.history.add_ai_message(response)
 
         return response
     

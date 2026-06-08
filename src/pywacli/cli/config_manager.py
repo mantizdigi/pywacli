@@ -157,6 +157,99 @@ def delete_media_entry(entry_id: int):
     save_config(config)
 
 
+RECENT_CONTACTS_FILE = CONFIG_DIR / "recent_contacts.json"
+
+
+def save_recent_contact(phone: str, name: str = ""):
+    """Save a phone number to recent contacts (most recent first, max 20)."""
+    contacts = load_recent_contacts()
+    contacts = [c for c in contacts if c["phone"] != phone]
+    contacts.insert(0, {"phone": phone, "name": name})
+    contacts = contacts[:20]
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(RECENT_CONTACTS_FILE, "w") as f:
+        json.dump(contacts, f, indent=2)
+
+
+def load_recent_contacts() -> list:
+    """Load recent contacts from file."""
+    if not RECENT_CONTACTS_FILE.exists():
+        return []
+    try:
+        with open(RECENT_CONTACTS_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+def load_ai_provider_keys():
+    """Load AI provider API keys from config and set as environment variables.
+    Returns the ai_providers config dict."""
+    config = load_config()
+    ai_config = config.get("ai_providers", {})
+
+    key_map = {
+        "openai_api_key": "OPENAI_API_KEY",
+        "google_api_key": "GOOGLE_API_KEY",
+        "anthropic_api_key": "ANTHROPIC_API_KEY",
+        "zhipuai_api_key": "ZHIPUAI_API_KEY",
+    }
+
+    for config_key, env_var in key_map.items():
+        value = ai_config.get(config_key, "")
+        if value:
+            os.environ[env_var] = value
+
+    return ai_config
+
+
+def has_api_key(provider: str) -> bool:
+    """Check if a provider has a saved API key in config."""
+    config = load_config()
+    ai_config = config.get("ai_providers", {})
+    key_map = {
+        "openai": "openai_api_key",
+        "gemini": "google_api_key",
+        "claude": "anthropic_api_key",
+        "glm": "zhipuai_api_key",
+    }
+    config_key = key_map.get(provider)
+    if not config_key:
+        return True  # ollama needs no key
+    return bool(ai_config.get(config_key, "").strip())
+
+
+def get_saved_provider() -> dict | None:
+    """Return saved provider/model if a valid key exists, else None."""
+    config = load_config()
+    ai_config = config.get("ai_providers", {})
+    provider = ai_config.get("default_provider", "")
+    model = ai_config.get("default_model", "")
+    if provider and has_api_key(provider):
+        return {"provider": provider, "model": model}
+    return None
+
+
+def save_ai_provider(provider: str, model: str, api_key: str = ""):
+    """Save AI provider settings and optionally its API key."""
+    config = load_config()
+    if "ai_providers" not in config:
+        config["ai_providers"] = {}
+    ai = config["ai_providers"]
+    ai["default_provider"] = provider
+    ai["default_model"] = model
+    key_map = {
+        "openai": "openai_api_key",
+        "gemini": "google_api_key",
+        "claude": "anthropic_api_key",
+        "glm": "zhipuai_api_key",
+    }
+    config_key = key_map.get(provider)
+    if config_key and api_key:
+        ai[config_key] = api_key
+    save_config(config)
+
+
 def get_default_config() -> dict:
     return {
         "whatsapp": {
@@ -176,5 +269,12 @@ def get_default_config() -> dict:
         "logging": {
             "level": "INFO",
             "file": "./pywacli.log"
+        },
+        "ai_providers": {
+            "openai_api_key": "",
+            "google_api_key": "",
+            "anthropic_api_key": "",
+            "default_provider": "ollama",
+            "default_model": "llama3"
         }
     }

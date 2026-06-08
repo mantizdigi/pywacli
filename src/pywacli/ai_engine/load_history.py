@@ -5,4 +5,4 @@ class LoadHistory:
 
     @staticmethod
     def history()->ChatMessageHistory:
-        pass
+        return ChatMessageHistory()

@@ -32,13 +32,14 @@ DIM_STYLE = "dim white"
 ACCENT_STYLE = "bold magenta"
 INFO_STYLE = "bold blue"
 
-SECTIONS = ["whatsapp", "media_storage", "database", "dashboard", "logging"]
+SECTIONS = ["whatsapp", "media_storage", "database", "dashboard", "logging", "ai_providers"]
 SECTION_LABELS = {
     "whatsapp": "WhatsApp Connection",
     "media_storage": "Media Storage",
     "database": "Database Settings",
     "dashboard": "Display & Dashboard",
     "logging": "Logging",
+    "ai_providers": "AI Providers (API Keys)",
 }
 
 
@@ -136,13 +137,14 @@ def show_main_menu():
     menu_table.add_row("3", "Database Settings")
     menu_table.add_row("4", "Display & Dashboard")
     menu_table.add_row("5", "Logging")
+    menu_table.add_row("6", "AI Providers (API Keys)")
     menu_table.add_row("")
-    menu_table.add_row("6", "Save & Exit")
-    menu_table.add_row("7", "Discard & Exit")
+    menu_table.add_row("7", "Save & Exit")
+    menu_table.add_row("8", "Discard & Exit")
 
     console.print(Panel(menu_table, title="[bold cyan]Menu[/]", box=ROUNDED, border_style="cyan"))
 
-    choice = choose_option("Enter choice [1-7]", [str(i) for i in range(1, 8)])
+    choice = choose_option("Enter choice [1-8]", [str(i) for i in range(1, 9)])
     return choice
 
 
@@ -479,6 +481,57 @@ def configure_logging():
     print_success(f"Logging configured — level: {level}, file: {log_file}")
 
 
+def configure_ai_providers():
+    config = load_config()
+    current = config.get("ai_providers", {})
+    print_header("AI Providers", "Configure API keys for AI services")
+
+    console.print(Panel(
+        "[dim]Enter API keys for the AI providers you want to use.\n"
+        "Press ENTER to skip a provider you don't need.[/]",
+        box=ROUNDED, border_style="blue"
+    ))
+    console.print()
+
+    openai_key = Prompt.ask(
+        "  OpenAI API Key",
+        default=current.get("openai_api_key", ""),
+        password=True
+    )
+
+    google_key = Prompt.ask(
+        "  Google API Key (Gemini)",
+        default=current.get("google_api_key", ""),
+        password=True
+    )
+
+    anthropic_key = Prompt.ask(
+        "  Anthropic API Key (Claude)",
+        default=current.get("anthropic_api_key", ""),
+        password=True
+    )
+
+    default_provider = Prompt.ask(
+        "  Default AI provider",
+        default=current.get("default_provider", "ollama")
+    )
+
+    default_model = Prompt.ask(
+        "  Default model name",
+        default=current.get("default_model", "llama3")
+    )
+
+    config["ai_providers"] = {
+        "openai_api_key": openai_key,
+        "google_api_key": google_key,
+        "anthropic_api_key": anthropic_key,
+        "default_provider": default_provider,
+        "default_model": default_model,
+    }
+    save_config(config)
+    print_success("AI providers configured successfully!")
+
+
 def show_summary():
     config = load_config()
     print_header("Configuration Summary")
@@ -558,9 +611,12 @@ def run_config_main_menu():
             configure_logging()
             Prompt.ask("\n  Press ENTER to continue", default="")
         elif choice == "6":
+            configure_ai_providers()
+            Prompt.ask("\n  Press ENTER to continue", default="")
+        elif choice == "7":
             print_success("Configuration saved. Exiting.")
             return "exit"
-        elif choice == "7":
+        elif choice == "8":
             if confirm_action("Discard all changes and exit?", default=False):
                 print_info("Exiting without saving.")
                 return "exit"
@@ -598,6 +654,8 @@ def run_full_setup():
     configure_dashboard()
     Prompt.ask("\n  Press ENTER to continue", default="")
     configure_logging()
+    Prompt.ask("\n  Press ENTER to continue", default="")
+    configure_ai_providers()
     Prompt.ask("\n  Press ENTER to continue", default="")
 
     print_header("Setup Complete!")

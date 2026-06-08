@@ -3,3 +3,10 @@ rich
 websockets
 boto3
 python-dotenv
+langchain
+langchain-ollama
+langchain-community
+langchain-openai
+langchain-google-genai
+langchain-anthropic
+langchain-zhipuai-dev
