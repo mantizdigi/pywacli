@@ -9,4 +9,4 @@ langchain-community
 langchain-openai
 langchain-google-genai
 langchain-anthropic
-langchain-zhipuai-dev
+# GLM / ZhipuAI uses OpenAI-compatible API via langchain-openai

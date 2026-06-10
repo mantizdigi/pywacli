@@ -17,6 +17,7 @@ class PromptTempate:
             "appointment_booking": self.__build_prompt(SkillGenerator.appointment_booking),
             "order_tracking": self.__build_prompt(SkillGenerator.order_tracking),
             "faq_bot": self.__build_prompt(SkillGenerator.faq_bot),
+            "clone": self.__build_prompt(SkillGenerator.clone),
         }
 
         self.prompt_template = PROMPT_TYPE.get(prompt_type)

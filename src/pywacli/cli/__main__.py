@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import shutil
 import subprocess
 import importlib.resources
@@ -15,6 +16,21 @@ from pywacli.cli.app import main as launch_dashboard
 from pywacli.cli.ui.media_viewer import run_media_viewer
 
 console = Console()
+
+
+def _contact_key(jid: str, phone: str = "") -> str:
+    """Normalize a contact identifier for dedup (strip WhatsApp suffixes)."""
+    raw = jid or phone
+    return re.sub(r"@\w+(\.\w+)*$", "", raw).strip()
+
+
+def _ensure_jid(raw_jid: str) -> str:
+    """Ensure a JID has the @s.whatsapp.net suffix."""
+    if not raw_jid:
+        return ""
+    if "@" in raw_jid:
+        return raw_jid
+    return f"{raw_jid}@s.whatsapp.net"
 app = typer.Typer(
     name="pywacli",
     help="Python WhatsApp CLI — Terminal dashboard for WhatsApp",
@@ -168,6 +184,7 @@ def _interactive_send():
     """Interactive send flow with recent contacts, quick messages and continue option."""
     from pywacli.services.message_sender import send_message
     from pywacli.cli.config_manager import load_config, load_recent_contacts, save_recent_contact
+    from pywacli.db.retriver_db import get_all_contacts
 
     QUICK_MESSAGES = {
         "1": "Hello!",
@@ -186,21 +203,38 @@ def _interactive_send():
     ws_url = config.get("whatsapp", {}).get("websocket_url", "ws://localhost:3000")
 
     phone = None
+    picked_name = ""
+    picked_jid = None
 
     while True:
         # Ask phone number only if we don't have one yet
         if phone is None:
             console.print()
-            contacts = load_recent_contacts()
+            db_contacts = get_all_contacts()
+            recent = load_recent_contacts()
 
-            if contacts:
+            merged = []
+            seen = set()
+            for phone_num, push_name, jid in db_contacts:
+                key = _contact_key(jid, phone_num)
+                if key and key not in seen:
+                    merged.append({"phone": phone_num, "name": push_name, "jid": jid})
+                    seen.add(key)
+            for c in recent:
+                key = _contact_key(c.get("jid", ""), c.get("phone", ""))
+                if key and key not in seen:
+                    merged.append({"phone": c["phone"], "name": c.get("name", ""), "jid": c.get("jid", "")})
+                    seen.add(key)
+
+            if merged:
                 table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
                 table.add_column("Key", style="bold magenta", width=4)
-                table.add_column("Phone", style="bold white", width=18)
-                table.add_column("Name", style="dim white")
-                for i, c in enumerate(contacts, 1):
-                    name = c.get("name", "") or "-"
-                    table.add_row(str(i), c["phone"], name)
+                table.add_column("Display", style="bold white", width=22)
+                table.add_column("Phone / ID", style="dim white")
+                for i, c in enumerate(merged, 1):
+                    display = c.get("name") or "-"
+                    phone_id = c.get("phone") or c.get("jid", "")
+                    table.add_row(str(i), display, phone_id)
                 table.add_row("0", "[dim]Type a new number[/]", "")
                 console.print(table)
                 raw = Prompt.ask("[bold cyan]Pick a contact or enter new number[/]", default="1")
@@ -208,11 +242,19 @@ def _interactive_send():
                 raw = Prompt.ask("[bold cyan]Phone number[/] (e.g. 919876543210, no +)")
 
             # Check if user picked a contact by index
-            if raw.isdigit() and contacts and 1 <= int(raw) <= len(contacts):
-                phone = contacts[int(raw) - 1]["phone"]
-                console.print(f"[dim]Selected:[/] {phone}")
+            if raw.isdigit() and merged and 1 <= int(raw) <= len(merged):
+                picked = merged[int(raw) - 1]
+                phone = picked.get("phone", "")
+                picked_jid = picked.get("jid", "")
+                if not phone:
+                    phone = picked_jid.split("@")[0] if "@" in picked_jid else ""
+                    phone = "".join(ch for ch in phone if ch.isdigit())
+                picked_name = picked.get("name", phone)
+                console.print(f"[dim]Selected:[/] {picked_name} ({phone})")
             else:
                 phone = raw.strip().replace("+", "").replace(" ", "").replace("-", "")
+                picked_name = ""
+                picked_jid = None
 
             if not phone.isdigit() or len(phone) < 7:
                 console.print("[red]Invalid phone number. Enter 7-15 digits (e.g. 919876543210).[/]")
@@ -239,15 +281,15 @@ def _interactive_send():
 
         console.print(f"[cyan]Sending to[/] {phone} ...")
         try:
-            send_message(phone, message, uri=ws_url)
+            send_message(phone, message, uri=ws_url, jid=picked_jid)
             console.print(f"[green]Message sent to {phone}[/]")
-            save_recent_contact(phone)
+            save_recent_contact(phone, name=picked_name)
         except Exception as e:
             console.print(f"[red]Failed to send message: {e}[/]")
 
         console.print()
         again = Prompt.ask(
-            "[bold cyan]What next?[/] [dim]1=Same number, 2=New number, 3=Back to menu[/]",
+            "[bold cyan]What next?[/] [dim]1=Undo, 2=New number, 3=Back to menu[/]",
             choices=["1", "2", "3"],
             default="3"
         )
@@ -297,6 +339,7 @@ def _show_skill_picker():
         "appointment_booking": "Appointment Booking",
         "order_tracking": "Order Tracking",
         "faq_bot": "FAQ Bot",
+        "clone": "Conversation Clone",
     }
 
     console.print()
@@ -337,14 +380,15 @@ def _interactive_automate():
     merged = []
     seen = set()
     for phone_num, push_name, jid in db_contacts:
-        display = push_name or phone_num or jid
-        if display not in seen:
+        key = _contact_key(jid, phone_num)
+        if key and key not in seen:
             merged.append({"phone": phone_num, "name": push_name, "jid": jid})
-            seen.add(display)
+            seen.add(key)
     for c in recent:
-        if c["phone"] not in seen:
-            merged.append({"phone": c["phone"], "name": c.get("name", ""), "jid": ""})
-            seen.add(c["phone"])
+        key = _contact_key(c.get("jid", ""), c.get("phone", ""))
+        if key and key not in seen:
+            merged.append({"phone": c["phone"], "name": c.get("name", ""), "jid": c.get("jid", "")})
+            seen.add(key)
 
     phone = None
 
@@ -353,7 +397,7 @@ def _interactive_automate():
         table.add_column("Key", style="bold magenta", width=4)
         table.add_column("Display", style="bold white", width=22)
         table.add_column("Phone / ID", style="dim white")
-        for i, c in enumerate(merged[:15], 1):
+        for i, c in enumerate(merged, 1):
             display = c.get("name") or "-"
             phone_id = c.get("phone") or c.get("jid", "")
             table.add_row(str(i), display, phone_id)
@@ -363,7 +407,10 @@ def _interactive_automate():
     else:
         raw = Prompt.ask("[bold cyan]Phone number or name[/] (e.g. 919876543210)")
 
-    if raw.isdigit() and merged and 1 <= int(raw) <= len(merged):
+    if raw == "0":
+        phone = Prompt.ask("[bold cyan]Enter phone number[/] (e.g. 919876543210)")
+        phone = phone.strip().replace("+", "").replace(" ", "").replace("-", "")
+    elif raw.isdigit() and merged and 1 <= int(raw) <= len(merged):
         picked = merged[int(raw) - 1]
         phone = picked.get("phone") or picked.get("name") or picked.get("jid", "")
         console.print(f"[dim]Selected:[/] {picked.get('name') or phone} ({phone})")
@@ -461,11 +508,19 @@ def _interactive_automate():
     save_recent_contact(phone)
 
     # --- Step 5: Load existing conversation history ---
-    existing_messages = get_messages_by_contact(phone, limit=50)
+    existing_messages = get_messages_by_contact(phone, limit=200, include_sent=True)
+    is_self_chat = existing_messages and not any(not msg[2] for msg in existing_messages)
+
     for msg in existing_messages:
         msg_id, text, from_me, push_name, p_number, timestamp, msg_jid = msg
         if text:
-            ai_provider.history.add_user_message(text)
+            if is_self_chat:
+                # alternate roles so AI sees conversation flow
+                ai_provider.history.add_user_message(text)
+            elif from_me:
+                ai_provider.history.add_ai_message(text)
+            else:
+                ai_provider.history.add_user_message(text)
 
     last_message_id = existing_messages[-1][0] if existing_messages else None
     # Get the real JID for sending replies
@@ -473,8 +528,9 @@ def _interactive_automate():
 
     # --- Step 6: Show status and start monitoring ---
     console.print()
+    mode_str = "Self-chat" if is_self_chat else "Auto-reply"
     console.print(Panel(
-        f"[bold green]Auto-Reply Bot Started[/]\n"
+        f"[bold green]{mode_str} Bot Started[/]\n"
         f"[dim]Contact:[/] {phone}\n"
         f"[dim]Skill:[/] {skill_label}\n"
         f"[dim]Provider:[/] {provider_name.title()} ({model_name})\n"
@@ -500,6 +556,7 @@ def _interactive_automate():
 
     # --- Step 7: Polling loop ---
     running = True
+    _skip_echo = None
 
     def _stop_handler():
         nonlocal running
@@ -519,13 +576,22 @@ def _interactive_automate():
                 break
 
             # Check for new messages
-            new_msgs = get_new_messages_after(phone, last_message_id)
+            new_msgs = get_new_messages_after(phone, last_message_id, include_sent=is_self_chat)
 
             for msg in new_msgs:
                 if not running:
                     break
                 msg_id, text, from_me, push_name, p_number, timestamp, msg_jid = msg
-                if not text or from_me:
+                if not text:
+                    continue
+
+                # Self-chat: skip echo of our own last response
+                if is_self_chat:
+                    if from_me and _skip_echo is not None and text.strip() == _skip_echo:
+                        _skip_echo = None
+                        last_message_id = msg_id
+                        continue
+                elif from_me:
                     continue
 
                 # Use the real JID from the message for replies
@@ -533,7 +599,8 @@ def _interactive_automate():
                     contact_jid = msg_jid
 
                 # Display incoming message
-                console.print(f"  [bold green]{push_name or phone}:[/] {text}")
+                label = "You" if from_me else (push_name or phone)
+                console.print(f"  [bold {'blue' if from_me else 'green'}]{label}:[/] {text}")
 
                 # Generate AI response
                 result = {"response": None, "error": None}
@@ -566,6 +633,8 @@ def _interactive_automate():
                     else:
                         send_message(phone, ai_reply, uri=ws_url)
                     console.print(f"  [dim]Sent to {push_name or phone}[/]")
+                    if is_self_chat:
+                        _skip_echo = ai_reply.strip()
                 except Exception as e:
                     console.print(f"  [red]Send failed: {e}[/]")
 
@@ -580,54 +649,56 @@ def _interactive_automate():
 
 
 def _show_menu():
-    console.clear()
-    title = Panel(
-        "[bold cyan]╔══════════════════════════════════════╗\n"
-        "║       P Y W A C L I   M E N U       ║\n"
-        "╚══════════════════════════════════════╝",
-        box=ROUNDED, border_style="blue"
-    )
-    console.print(title)
+    while True:
+        console.clear()
+        title = Panel(
+            "[bold cyan]╔══════════════════════════════════════╗\n"
+            "║       P Y W A C L I   M E N U       ║\n"
+            "╚══════════════════════════════════════╝",
+            box=ROUNDED, border_style="blue"
+        )
+        console.print(title)
 
-    table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
-    table.add_column("Key", style="bold magenta", width=6)
-    table.add_column("Option", style="bold white", width=20)
-    table.add_column("Description", style="dim white")
-    table.add_row("1", "Dashboard", "Launch the WhatsApp dashboard")
-    table.add_row("2", "Setup", "Run the interactive configuration wizard")
-    table.add_row("3", "Config", "Open configuration menu")
-    table.add_row("4", "Run", "Start baileys + websocket services")
-    table.add_row("5", "Send", "Send a WhatsApp message")
-    table.add_row("6", "Automate", "AI-powered automated chat")
-    table.add_row("7", "Media", "Browse stored media")
-    table.add_row("8", "Init", "Install Node.js (Baileys) dependencies")
-    table.add_row("0", "Exit", "Exit the application")
-    console.print(table)
+        table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
+        table.add_column("Key", style="bold magenta", width=6)
+        table.add_column("Option", style="bold white", width=20)
+        table.add_column("Description", style="dim white")
+        table.add_row("1", "Dashboard", "Launch the WhatsApp dashboard")
+        table.add_row("2", "Setup", "Run the interactive configuration wizard")
+        table.add_row("3", "Config", "Open configuration menu")
+        table.add_row("4", "Run", "Start baileys + websocket services")
+        table.add_row("5", "Send", "Send a WhatsApp message")
+        table.add_row("6", "Automate", "AI-powered automated chat")
+        table.add_row("7", "Media", "Browse stored media")
+        table.add_row("8", "Init", "Install Node.js (Baileys) dependencies")
+        table.add_row("0", "Exit", "Exit the application")
+        console.print(table)
 
-    choice = Prompt.ask(
-        "\n[bold cyan]Enter your choice[/]",
-        choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"],
-        default="1"
-    )
+        choice = Prompt.ask(
+            "\n[bold cyan]Enter your choice[/]",
+            choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"],
+            default="1"
+        )
 
-    if choice == "1":
-        launch_dashboard()
-    elif choice == "2":
-        run_config_wizard()
-    elif choice == "3":
-        run_config_wizard()
-    elif choice == "4":
-        run()
-    elif choice == "5":
-        _interactive_send()
-    elif choice == "6":
-        _interactive_automate()
-    elif choice == "7":
-        run_media_viewer()
-    elif choice == "8":
-        init()
-    elif choice == "0":
-        console.print("[yellow]Exiting...[/]")
+        if choice == "1":
+            launch_dashboard()
+        elif choice == "2":
+            run_config_wizard()
+        elif choice == "3":
+            run_config_wizard()
+        elif choice == "4":
+            run()
+        elif choice == "5":
+            _interactive_send()
+        elif choice == "6":
+            _interactive_automate()
+        elif choice == "7":
+            run_media_viewer()
+        elif choice == "8":
+            init()
+        elif choice == "0":
+            console.print("[yellow]Exiting...[/]")
+            break
 
 
 if __name__ == "__main__":

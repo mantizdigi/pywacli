@@ -106,13 +106,15 @@ def get_media_by_id(media_id):
     return cursor.fetchone()
 
 
-def get_messages_by_contact(phone_number, limit=50):
-    """Get recent messages from a specific contact (incoming only).
+def get_messages_by_contact(phone_number, limit=50, include_sent=False):
+    """Get recent messages from a specific contact.
     Matches by phone_number, jid prefix, or push_name."""
-    sql = """
+    where_extra = "" if include_sent else "AND from_me = 0"
+    sql = f"""
         SELECT id, text, from_me, push_name, phone_number, timestamp, jid
         FROM messages
-        WHERE from_me = 0
+        WHERE 1=1
+          {where_extra}
           AND (
             phone_number = ?
             OR jid LIKE ?
@@ -145,12 +147,14 @@ def get_latest_message_id(phone_number):
     return row[0] if row else None
 
 
-def get_new_messages_after(phone_number, last_message_id):
-    """Get new incoming messages after a specific message ID."""
-    sql = """
+def get_new_messages_after(phone_number, last_message_id, include_sent=False):
+    """Get new messages after a specific message ID."""
+    where_extra = "" if include_sent else "AND from_me = 0"
+    sql = f"""
         SELECT id, text, from_me, push_name, phone_number, timestamp, jid
         FROM messages
-        WHERE from_me = 0
+        WHERE 1=1
+          {where_extra}
           AND (
             phone_number = ?
             OR jid LIKE ?
