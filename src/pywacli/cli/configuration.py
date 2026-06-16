@@ -164,9 +164,9 @@ def show_media_action_menu(entry: dict, entry_index: int, total: int):
     tbl.add_row("Store Status", "✅ Yes" if entry.get("store_status") else "❌ No")
     tbl.add_row("Store View-Once", "✅ Yes" if entry.get("store_view_once") else "❌ No")
     provider = entry.get("provider", "")
-    provider_labels = {"s3": "AWS S3", "r2": "Cloudflare R2", "local": "Local Path"}
+    provider_labels = {"s3": "AWS S3", "r2": "Cloudflare R2", "b2": "Backblaze B2", "local": "Local Path"}
     tbl.add_row("Provider", provider_labels.get(provider, provider.upper()))
-    if provider in ("s3", "r2"):
+    if provider in ("s3", "r2", "b2"):
         tbl.add_row("Endpoint", entry.get("endpoint", ""))
         tbl.add_row("Access Key ID", entry.get("access_key_id", ""))
         tbl.add_row("Secret Key", "********")
@@ -270,10 +270,11 @@ def configure_media_entry(existing: dict = None) -> dict:
     provider_table.add_row("1", "AWS S3", "Amazon Simple Storage Service")
     provider_table.add_row("2", "Cloudflare R2", "S3-compatible, no egress fees")
     provider_table.add_row("3", "Local Path", "Store on local filesystem")
+    provider_table.add_row("4", "Backblaze B2", "S3-compatible cloud storage")
     console.print(Panel(provider_table, box=ROUNDED, border_style="cyan"))
 
     current_provider = entry.get("provider", "")
-    provider_map = {"1": "s3", "2": "r2", "3": "local"}
+    provider_map = {"1": "s3", "2": "r2", "3": "local", "4": "b2"}
     default_key = "1"
     for k, v in provider_map.items():
         if v == current_provider:
@@ -281,15 +282,16 @@ def configure_media_entry(existing: dict = None) -> dict:
             break
 
     prov_choice = choose_option(
-        "Enter choice [1-3]",
-        ["1", "2", "3"],
+        "Enter choice [1-4]",
+        ["1", "2", "3", "4"],
         default=default_key
     )
     entry["provider"] = provider_map[prov_choice]
 
     console.print()
-    if entry["provider"] in ("s3", "r2"):
-        provider_name = "AWS S3" if entry["provider"] == "s3" else "Cloudflare R2"
+    if entry["provider"] in ("s3", "r2", "b2"):
+        provider_labels_local = {"s3": "AWS S3", "r2": "Cloudflare R2", "b2": "Backblaze B2"}
+        provider_name = provider_labels_local.get(entry["provider"], entry["provider"].upper())
         console.print(Panel(
             f"[bold cyan]{provider_name} Configuration[/]",
             box=HEAVY, border_style="cyan"
@@ -297,6 +299,8 @@ def configure_media_entry(existing: dict = None) -> dict:
 
         if entry["provider"] == "s3":
             default_endpoint = entry.get("endpoint", "http://localhost:4566")
+        elif entry["provider"] == "b2":
+            default_endpoint = entry.get("endpoint", "https://s3.<region>.backblazeb2.com")
         else:
             default_endpoint = entry.get("endpoint", "https://<account>.r2.cloudflarestorage.com")
 
@@ -550,7 +554,7 @@ def show_summary():
             status_text.append(f"{len(entries)} provider(s)", style=VALUE_STYLE)
             for e in entries:
                 prov = e.get("provider", "")
-                prov_label = {"s3": "S3", "r2": "R2", "local": "Local"}.get(prov, prov)
+                prov_label = {"s3": "S3", "r2": "R2", "b2": "B2", "local": "Local"}.get(prov, prov)
                 types = []
                 if e.get("store_image"): types.append("📷")
                 if e.get("store_video"): types.append("🎬")

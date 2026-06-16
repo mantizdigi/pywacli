@@ -143,7 +143,7 @@ def _download_media(media_id, media_type, file_name):
         if not entry.get(type_field, False):
             continue
 
-        if provider in ("s3", "r2"):
+        if provider in ("s3", "r2", "b2"):
             bucket = entry.get("bucket_name")
             object_key = f"{media_type}/{file_name}" if file_name else None
             if bucket and object_key:

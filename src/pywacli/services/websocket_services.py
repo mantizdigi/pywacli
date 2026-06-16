@@ -122,7 +122,7 @@ async def main():
                                 continue
                             rel_parts = [f"{media_type}s", contact_dir]
 
-                        if provider in ("s3", "r2"):
+                        if provider in ("s3", "r2", "b2"):
                             bucket_name = entry.get("bucket_name", "whatsapp-media")
                             object_name = "/".join(rel_parts + [data['data']['fileName']])
                             status = upload_file_to_s3(

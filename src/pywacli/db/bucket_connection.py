@@ -31,9 +31,16 @@ def _get_first_s3_entry():
     config = load_config()
     entries = config.get("media_storage", {}).get("entries", [])
     for entry in entries:
-        if entry.get("provider") in ("s3", "r2"):
+        if entry.get("provider") in ("s3", "r2", "b2"):
             return entry
     return None
+
+
+def _normalize_endpoint(url):
+    """Prepend https:// if no scheme is present."""
+    if url and not url.startswith(("http://", "https://")):
+        return f"https://{url}"
+    return url
 
 
 def conection_to_s3(entry=None):
@@ -41,13 +48,13 @@ def conection_to_s3(entry=None):
         entry = _get_first_s3_entry()
 
     if entry is None:
-        print("❌ No S3/R2 storage entry found in config.")
+        print("❌ No S3/R2/B2 storage entry found in config.")
         return None
 
     try:
         s3_client = boto3.client(
             "s3",
-            endpoint_url=entry.get("endpoint"),
+            endpoint_url=_normalize_endpoint(entry.get("endpoint")),
             aws_access_key_id=entry.get("access_key_id"),
             aws_secret_access_key=entry.get("secret_access_key"),
             region_name=entry.get("region", "us-east-1")
