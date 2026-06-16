@@ -395,16 +395,57 @@ def configure_media_section():
 def configure_database():
     config = load_config()
     current = config.get("database", {})
-    print_header("Database Settings", "Configure SQLite database path")
+    print_header("Database Settings", "Choose database backend")
 
-    path = Prompt.ask(
-        "  Database file path",
-        default=current.get("path", "./pywacli.db")
+    db_type_table = Table(box=MINIMAL, show_header=False, padding=(0, 4))
+    db_type_table.add_column("Key", style=ACCENT_STYLE, width=8)
+    db_type_table.add_column("Type", style="white")
+    db_type_table.add_column("Description", style=DIM_STYLE)
+    db_type_table.add_row("1", "Local SQLite", "File-based, no server needed (default)")
+    db_type_table.add_row("2", "PostgreSQL", "Remote server database")
+    db_type_table.add_row("3", "MySQL", "Remote server database")
+    console.print(Panel(db_type_table, title="[bold cyan]Database Type[/]", box=ROUNDED, border_style="cyan"))
+
+    current_type = current.get("type", "sqlite")
+    type_map = {"1": "sqlite", "2": "postgresql", "3": "mysql"}
+    type_default = "1"
+    for k, v in type_map.items():
+        if v == current_type:
+            type_default = k
+            break
+
+    type_choice = choose_option(
+        "  Enter choice [1-3]",
+        ["1", "2", "3"],
+        default=type_default
     )
+    db_type = type_map[type_choice]
 
-    config["database"] = {"path": path}
+    db_config = {"type": db_type}
+
+    if db_type == "sqlite":
+        path = Prompt.ask(
+            "  Database file path",
+            default=current.get("path", "./pywacli.db")
+        )
+        db_config["path"] = path
+        print_success(f"SQLite database path set to: {path}")
+    else:
+        label = "PostgreSQL" if db_type == "postgresql" else "MySQL"
+        console.print(Panel(
+            f"[bold cyan]{label} Connection Settings[/]",
+            box=HEAVY, border_style="cyan"
+        ))
+        db_config["host"] = Prompt.ask("  Host", default=current.get("host", "localhost"))
+        default_port = current.get("port", "5432" if db_type == "postgresql" else "3306")
+        db_config["port"] = Prompt.ask("  Port", default=default_port)
+        db_config["name"] = Prompt.ask("  Database name", default=current.get("name", "pywacli"))
+        db_config["user"] = Prompt.ask("  Username", default=current.get("user", ""))
+        db_config["password"] = Prompt.ask("  Password", default=current.get("password", ""), password=True)
+        print_success(f"{label} configured: {db_config['user']}@{db_config['host']}:{db_config['port']}/{db_config['name']}")
+
+    config["database"] = db_config
     save_config(config)
-    print_success(f"Database path set to: {path}")
 
 
 def configure_dashboard():

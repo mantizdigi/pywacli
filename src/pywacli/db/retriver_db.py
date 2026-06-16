@@ -1,76 +1,42 @@
-import sqlite3
 import logging
 
-from pywacli.cli.config_manager import get_db_path
+from pywacli.db.engine import fetchall, fetchone
 
 
 logger = logging.getLogger(__name__)
 
 
-# Same configured path the writer (database.py) uses, so the dashboard reads
-# the database the services actually write to.
-DB_PATH = get_db_path()
-
-conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-cursor = conn.cursor()
-
-
-
 def get_total_messages():
+    return fetchone("SELECT COUNT(*) FROM messages")[0]
 
-    sql = "SELECT COUNT(*) FROM messages"
-
-    cursor.execute(sql)
-
-    return cursor.fetchone()[0]
 
 def get_total_statuses():
+    return fetchone("SELECT COUNT(*) FROM statuses")[0]
 
-    sql = "SELECT COUNT(*) FROM statuses"
-
-    cursor.execute(sql)
-
-    return cursor.fetchone()[0]
 
 def get_total_reactions():
+    return fetchone("SELECT COUNT(*) FROM reactions")[0]
 
-    sql = "SELECT COUNT(*) FROM reactions"
-
-    cursor.execute(sql)
-
-    return cursor.fetchone()[0]
 
 def get_total_media():
+    return fetchone("SELECT COUNT(*) FROM media")[0]
 
-    sql = "SELECT COUNT(*) FROM media"
-
-    cursor.execute(sql)
-
-    return cursor.fetchone()[0]
 
 def get_recent_messages(limit=10):
-
-    sql = """
-        SELECT push_name, text
-        FROM messages
-        ORDER BY rowid DESC
-        LIMIT ?
-    """
-
-    cursor.execute(sql, (limit,))
-
-    return cursor.fetchall()
+    return fetchall(
+        "SELECT push_name, text FROM messages ORDER BY rowid DESC LIMIT ?",
+        [limit]
+    )
 
 
 def get_media_types():
-    sql = "SELECT DISTINCT media_type FROM media WHERE media_type IS NOT NULL"
-    cursor.execute(sql)
-    return [row[0] for row in cursor.fetchall()]
+    rows = fetchall("SELECT DISTINCT media_type FROM media WHERE media_type IS NOT NULL")
+    return [row[0] for row in rows]
 
 
 def get_media_by_type(media_type=None, limit=50):
     if media_type:
-        sql = """
+        return fetchall("""
             SELECT m.media_id, m.media_type, m.file_name, m.push_name,
                    m.from_me, m.timestamp, m.file_path, h.sync
             FROM media m
@@ -78,37 +44,30 @@ def get_media_by_type(media_type=None, limit=50):
             WHERE m.media_type = ?
             ORDER BY m.timestamp DESC
             LIMIT ?
-        """
-        cursor.execute(sql, (media_type, limit))
+        """, [media_type, limit])
     else:
-        sql = """
+        return fetchall("""
             SELECT m.media_id, m.media_type, m.file_name, m.push_name,
                    m.from_me, m.timestamp, m.file_path, h.sync
             FROM media m
             LEFT JOIN media_handshake h ON m.media_id = h.media_id
             ORDER BY m.timestamp DESC
             LIMIT ?
-        """
-        cursor.execute(sql, (limit,))
-    return cursor.fetchall()
+        """, [limit])
 
 
 def get_media_by_id(media_id):
-    sql = """
+    return fetchone("""
         SELECT m.media_id, m.media_type, m.file_name, m.push_name,
                m.from_me, m.timestamp, m.file_path, m.media_mimetype,
                h.sync, h.failure_reason
         FROM media m
         LEFT JOIN media_handshake h ON m.media_id = h.media_id
         WHERE m.media_id = ?
-    """
-    cursor.execute(sql, (media_id,))
-    return cursor.fetchone()
+    """, [media_id])
 
 
 def get_messages_by_contact(phone_number, limit=50, include_sent=False):
-    """Get recent messages from a specific contact.
-    Matches by phone_number, jid prefix, or push_name."""
     where_extra = "" if include_sent else "AND from_me = 0"
     sql = f"""
         SELECT id, text, from_me, push_name, phone_number, timestamp, jid
@@ -124,12 +83,10 @@ def get_messages_by_contact(phone_number, limit=50, include_sent=False):
         LIMIT ?
     """
     jid_pattern = f"{phone_number}%"
-    cursor.execute(sql, (phone_number, jid_pattern, phone_number, limit))
-    return cursor.fetchall()
+    return fetchall(sql, [phone_number, jid_pattern, phone_number, limit])
 
 
 def get_latest_message_id(phone_number):
-    """Get the latest message ID from a contact."""
     sql = """
         SELECT id FROM messages
         WHERE from_me = 0
@@ -142,13 +99,11 @@ def get_latest_message_id(phone_number):
         LIMIT 1
     """
     jid_pattern = f"{phone_number}%"
-    cursor.execute(sql, (phone_number, jid_pattern, phone_number))
-    row = cursor.fetchone()
+    row = fetchone(sql, [phone_number, jid_pattern, phone_number])
     return row[0] if row else None
 
 
 def get_new_messages_after(phone_number, last_message_id, include_sent=False):
-    """Get new messages after a specific message ID."""
     where_extra = "" if include_sent else "AND from_me = 0"
     sql = f"""
         SELECT id, text, from_me, push_name, phone_number, timestamp, jid
@@ -163,8 +118,7 @@ def get_new_messages_after(phone_number, last_message_id, include_sent=False):
         ORDER BY timestamp ASC
     """
     jid_pattern = f"{phone_number}%"
-    cursor.execute(sql, (phone_number, jid_pattern, phone_number))
-    all_messages = cursor.fetchall()
+    all_messages = fetchall(sql, [phone_number, jid_pattern, phone_number])
 
     if not last_message_id:
         return all_messages
@@ -181,13 +135,10 @@ def get_new_messages_after(phone_number, last_message_id, include_sent=False):
 
 
 def get_all_contacts():
-    """Get all unique contacts from messages table (incoming only)."""
-    sql = """
+    return fetchall("""
         SELECT DISTINCT phone_number, push_name, jid
         FROM messages
         WHERE from_me = 0
           AND (phone_number != '' OR push_name != '')
         ORDER BY timestamp DESC
-    """
-    cursor.execute(sql)
-    return cursor.fetchall()
+    """)

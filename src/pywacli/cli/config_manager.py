@@ -31,6 +31,38 @@ def _as_file_in_dir(resolved: str, raw: str, default_name: str) -> str:
     return resolved
 
 
+def get_db_type() -> str:
+    """Return the database type: 'sqlite', 'postgresql', or 'mysql'."""
+    config = load_config()
+    return (config.get("database") or {}).get("type", "sqlite")
+
+
+def get_db_url() -> str:
+    """Build a SQLAlchemy connection URL from config."""
+    config = load_config()
+    db_config = config.get("database", {})
+    db_type = db_config.get("type", "sqlite")
+
+    if db_type == "sqlite":
+        path = db_config.get("path") or str(CONFIG_DIR / "pywacli.db")
+        resolved = _as_file_in_dir(_resolve_path(path), path, "pywacli.db")
+        os.makedirs(os.path.dirname(resolved), exist_ok=True)
+        return f"sqlite:///{resolved}"
+
+    host = db_config.get("host", "localhost")
+    port = db_config.get("port", "5432" if db_type == "postgresql" else "3306")
+    name = db_config.get("name", "pywacli")
+    user = db_config.get("user", "")
+    password = db_config.get("password", "")
+
+    if db_type == "postgresql":
+        return f"postgresql://{user}:{password}@{host}:{port}/{name}"
+    elif db_type == "mysql":
+        return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}"
+
+    return f"sqlite:///{CONFIG_DIR / 'pywacli.db'}"
+
+
 def get_db_path() -> str:
     """Resolved SQLite path from config['database']['path'].
 
