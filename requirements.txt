@@ -3,7 +3,7 @@ rich
 websockets
 boto3
 python-dotenv
-sqlalchemy>=2.0
+sqlalchemy
 psycopg2-binary
 pymysql
 langchain

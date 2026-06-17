@@ -6,6 +6,7 @@ from pywacli.db.database import (
     create_media_table,
     create_media_handshake_table,
     create_conversations_table,
+    migrate_int_to_bigint,
 )
 
 
@@ -18,3 +19,4 @@ def init_database():
     create_media_table()
     create_media_handshake_table()
     create_conversations_table()
+    migrate_int_to_bigint()

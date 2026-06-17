@@ -57,7 +57,7 @@ def create_table():
                 text TEXT,
                 from_me INTEGER,
                 push_name TEXT,
-                timestamp INTEGER
+                timestamp BIGINT
             )
         """)
         _ensure_column("messages", "phone_number", "TEXT")
@@ -96,7 +96,7 @@ def create_edit_table():
                 id {_integer_pk()},
                 message_id TEXT,
                 new_text TEXT,
-                edited_at INTEGER
+                edited_at BIGINT
             )
         """)
         logger.info("✅ edits table ready")
@@ -132,7 +132,7 @@ def create_status_table():
                 text TEXT,
                 push_name TEXT,
                 from_me INTEGER,
-                timestamp INTEGER
+                timestamp BIGINT
             )
         """)
         _ensure_column("statuses", "phone_number", "TEXT")
@@ -174,7 +174,7 @@ def create_reactions_table():
                 jid TEXT,
                 reaction TEXT,
                 from_me INTEGER,
-                timestamp INTEGER
+                timestamp BIGINT
             )
         """)
         logger.info("✅ reactions table ready")
@@ -216,7 +216,7 @@ def create_media_table():
                 from_me INTEGER DEFAULT 0,
                 is_status INTEGER DEFAULT 0,
                 is_view_once INTEGER DEFAULT 0,
-                timestamp INTEGER DEFAULT 0
+                timestamp BIGINT DEFAULT 0
             )
         """)
         _ensure_column("media", "is_status", "INTEGER DEFAULT 0")
@@ -229,15 +229,22 @@ def create_media_table():
         return False
 
 
+def _datetime_type():
+    driver = get_db_driver()
+    if driver == "postgresql":
+        return "TIMESTAMP"
+    return "DATETIME"
+
+
 def create_media_handshake_table():
     try:
         execute(f"""
             CREATE TABLE IF NOT EXISTS media_handshake (
                 id {_integer_pk()},
                 media_id INTEGER,
-                sync BOOLEAN DEFAULT 0,
+                sync BOOLEAN DEFAULT FALSE,
                 failure_reason TEXT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at {_datetime_type()} DEFAULT CURRENT_TIMESTAMP
             )
         """)
         logger.info("✅ media_handshake table ready")
@@ -280,7 +287,7 @@ def save_media_handshake(data):
             VALUES (?, ?, ?)
         """, [
             data.get("media_id"),
-            data.get("sync"),
+            bool(data.get("sync")),
             data.get("failure_reason")
         ])
         logger.info("✅ media_handshake saved")
@@ -308,7 +315,7 @@ def create_conversations_table():
                 participant TEXT,
                 is_status INTEGER DEFAULT 0,
                 is_view_once INTEGER DEFAULT 0,
-                timestamp INTEGER
+                timestamp BIGINT
             )
         """)
         _ensure_column("conversations", "is_view_once", "INTEGER DEFAULT 0")
@@ -349,3 +356,23 @@ def save_conversation(data):
     except Exception as e:
         logger.error(f"❌ Error saving conversation: {e}")
         return False
+
+
+def migrate_int_to_bigint():
+    driver = get_db_driver()
+    if driver != "postgresql":
+        return
+    columns = [
+        ("messages", "timestamp"),
+        ("message_edits", "edited_at"),
+        ("statuses", "timestamp"),
+        ("reactions", "timestamp"),
+        ("media", "timestamp"),
+        ("conversations", "timestamp"),
+    ]
+    for table, column in columns:
+        try:
+            execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE BIGINT")
+            logger.info(f"✅ {table}.{column} migrated to BIGINT")
+        except Exception:
+            pass

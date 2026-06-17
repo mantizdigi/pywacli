@@ -76,6 +76,11 @@ def insert_and_get_id(sql: str, params: list | None = None):
     """Execute an INSERT and return the last inserted row id."""
     named_sql, named_params = _convert_params(sql, params)
     with get_engine().connect() as conn:
+        if get_db_driver() == "postgresql":
+            result = conn.execute(sa_text(named_sql + " RETURNING *"), named_params)
+            conn.commit()
+            row = result.fetchone()
+            return row[0] if row else None
         result = conn.execute(sa_text(named_sql), named_params)
         conn.commit()
         return result.lastrowid

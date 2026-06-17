@@ -209,6 +209,13 @@ def section_exists(section: str) -> bool:
     return section in config and bool(config[section])
 
 
+def require_config(*sections: str) -> bool:
+    for s in sections:
+        if not section_exists(s):
+            return False
+    return True
+
+
 def delete_section(section: str):
     config = load_config()
     if section == "media_storage":

@@ -20,6 +20,7 @@ from pywacli.cli.config_manager import (
     console_logs_muted,
     get_send_host,
     get_send_port,
+    require_config,
 )
 
 console = Console()
@@ -852,6 +853,12 @@ def _interactive_automate():
         console.print("[yellow]Auto-reply bot stopped.[/]")
 
 
+def _redirect_to_config():
+    console.print("[yellow]⚠ Required configuration is missing.[/]")
+    if Prompt.ask("[bold cyan]Open configuration now?[/]", choices=["y", "n"], default="y") == "y":
+        run_config_wizard()
+
+
 def _show_menu():
     while True:
         console.clear()
@@ -866,44 +873,56 @@ def _show_menu():
         if _service_reachable():
             console.print("[bold green]● WhatsApp service running[/] [dim](Connect is live in another terminal)[/]")
         else:
-            console.print("[dim]○ Not connected — run 4 (Connect) in a separate terminal[/]")
+            console.print("[dim]○ Not connected — run 3 (Connect) in a separate terminal[/]")
 
         table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
         table.add_column("Key", style="bold magenta", width=6)
         table.add_column("Option", style="bold white", width=20)
         table.add_column("Description", style="dim white")
         table.add_row("1", "Dashboard", "Launch the WhatsApp dashboard")
-        table.add_row("2", "Setup", "Run the interactive configuration wizard")
-        table.add_row("3", "Config", "Open configuration menu")
-        table.add_row("4", "Connect", "Connect WhatsApp (QR) — keep this terminal open")
-        table.add_row("6", "Send", "Send a WhatsApp message")
-        table.add_row("7", "Automate", "AI-powered automated chat")
-        table.add_row("8", "Media", "Browse stored media")
-        table.add_row("9", "Init", "Install Node.js (Baileys) dependencies")
+        table.add_row("2", "Config", "Open configuration menu")
+        table.add_row("3", "Connect", "Connect WhatsApp (QR) — keep this terminal open")
+        table.add_row("4", "Send", "Send a WhatsApp message")
+        table.add_row("5", "Automate", "AI-powered automated chat")
+        table.add_row("6", "Media", "Browse stored media")
+        table.add_row("7", "Init", "Install Node.js (Baileys) dependencies")
         table.add_row("0", "Exit", "Exit the application")
         console.print(table)
 
         choice = Prompt.ask(
             "\n[bold cyan]Enter your choice[/]",
-            choices=["0", "1", "2", "3", "4", "6", "7", "8", "9"],
+            choices=["0", "1", "2", "3", "4", "5", "6", "7"],
             default="1"
         )
 
         if choice == "1":
-            launch_dashboard()
+            if require_config("whatsapp", "database"):
+                launch_dashboard()
+            else:
+                _redirect_to_config()
         elif choice == "2":
             run_config_wizard()
         elif choice == "3":
-            run_config_wizard()
+            if require_config("whatsapp", "database"):
+                connect()
+            else:
+                _redirect_to_config()
         elif choice == "4":
-            connect()
+            if require_config("whatsapp", "database"):
+                _menu_send()
+            else:
+                _redirect_to_config()
+        elif choice == "5":
+            if require_config("whatsapp", "database", "ai_providers"):
+                _interactive_automate()
+            else:
+                _redirect_to_config()
         elif choice == "6":
-            _menu_send()
+            if require_config("media_storage"):
+                run_media_viewer()
+            else:
+                _redirect_to_config()
         elif choice == "7":
-            _interactive_automate()
-        elif choice == "8":
-            run_media_viewer()
-        elif choice == "9":
             init()
         elif choice == "0":
             console.print("[yellow]Exiting...[/]")
