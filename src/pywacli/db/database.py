@@ -1,11 +1,11 @@
-import logging
-
-from pywacli.cli.config_manager import setup_logging
+from pywacli.cli.config_manager import setup_logging, get_service_logger
 from pywacli.db.engine import get_engine, get_db_driver, execute, insert_and_get_id
 
 
 setup_logging()
-logger = logging.getLogger(__name__)
+# File-only logger: these per-row status lines must not spam the interactive
+# console while the background WhatsApp session is saving incoming events.
+logger = get_service_logger("pywacli.db")
 
 
 def _integer_pk():
@@ -61,7 +61,7 @@ def create_table():
             )
         """)
         _ensure_column("messages", "phone_number", "TEXT")
-        print("✅ messages table ready")
+        logger.info("✅ messages table ready")
         return True
     except Exception as e:
         logger.error("Error creating table: %s", e)
@@ -82,7 +82,7 @@ def save_message(data):
             data.get("phoneNumber", ""),
             data.get("timestamp", 0)
         ])
-        print("✅ Message saved")
+        logger.info("✅ Message saved")
         return True
     except Exception as e:
         logger.error("Error saving message: %s", e)
@@ -99,7 +99,7 @@ def create_edit_table():
                 edited_at INTEGER
             )
         """)
-        print("✅ edits table ready")
+        logger.info("✅ edits table ready")
         return True
     except Exception as e:
         logger.error("Error creating edits table: %s", e)
@@ -116,7 +116,7 @@ def save_edited_message(data):
             data.get("text"),
             data.get("timestamp", 0)
         ])
-        print("✅ Edited message saved")
+        logger.info("✅ Edited message saved")
         return True
     except Exception as e:
         logger.error("Error saving edited message: %s", e)
@@ -136,7 +136,7 @@ def create_status_table():
             )
         """)
         _ensure_column("statuses", "phone_number", "TEXT")
-        print("✅ statuses table ready")
+        logger.info("✅ statuses table ready")
         return True
     except Exception as e:
         logger.error("Error creating statuses table: %s", e)
@@ -157,7 +157,7 @@ def save_status(data):
             1 if data.get("fromMe") else 0,
             data.get("timestamp")
         ])
-        print("✅ Status saved")
+        logger.info("✅ Status saved")
         return True
     except Exception as e:
         logger.error("Error saving status: %s", e)
@@ -177,7 +177,7 @@ def create_reactions_table():
                 timestamp INTEGER
             )
         """)
-        print("✅ reactions table ready")
+        logger.info("✅ reactions table ready")
     except Exception as e:
         logger.error("Error creating reactions table: %s", e)
 
@@ -195,7 +195,7 @@ def save_reaction(data):
             int(data.get("fromMe", False)),
             data.get("timestamp", 0)
         ])
-        print("✅ Reaction saved")
+        logger.info("✅ Reaction saved")
         return True
     except Exception as e:
         logger.error("Error saving reaction: %s", e)
@@ -222,10 +222,10 @@ def create_media_table():
         _ensure_column("media", "is_status", "INTEGER DEFAULT 0")
         _ensure_column("media", "is_view_once", "INTEGER DEFAULT 0")
         _ensure_column("media", "phone_number", "TEXT")
-        print("✅ media table ready")
+        logger.info("✅ media table ready")
         return True
     except Exception as e:
-        print(f"❌ Error in media table: {e}")
+        logger.error(f"❌ Error in media table: {e}")
         return False
 
 
@@ -240,10 +240,10 @@ def create_media_handshake_table():
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        print("✅ media_handshake table ready")
+        logger.info("✅ media_handshake table ready")
         return True
     except Exception as e:
-        print(f"❌ Error in media_handshake table: {e}")
+        logger.error(f"❌ Error in media_handshake table: {e}")
         return False
 
 
@@ -266,10 +266,10 @@ def save_media_table(data):
             1 if data.get("isViewOnce") else 0,
             data.get("timestamp")
         ])
-        print("✅ Media Saved")
+        logger.info("✅ Media Saved")
         return rid
     except Exception as e:
-        print(f"❌ Error in save_media_table: {e}")
+        logger.error(f"❌ Error in save_media_table: {e}")
         return False
 
 
@@ -283,10 +283,10 @@ def save_media_handshake(data):
             data.get("sync"),
             data.get("failure_reason")
         ])
-        print("✅ media_handshake saved")
+        logger.info("✅ media_handshake saved")
         return True
     except Exception as e:
-        print(f"❌ Error saving handshake: {e}")
+        logger.error(f"❌ Error saving handshake: {e}")
         return False
 
 
@@ -313,10 +313,10 @@ def create_conversations_table():
         """)
         _ensure_column("conversations", "is_view_once", "INTEGER DEFAULT 0")
         _ensure_column("conversations", "phone_number", "TEXT")
-        print("✅ conversations table ready")
+        logger.info("✅ conversations table ready")
         return True
     except Exception as e:
-        print(f"❌ Error creating conversations table: {e}")
+        logger.error(f"❌ Error creating conversations table: {e}")
         return False
 
 
@@ -344,8 +344,8 @@ def save_conversation(data):
             1 if data.get("isViewOnce") else 0,
             data.get("timestamp")
         ])
-        print("✅ Conversation saved")
+        logger.info("✅ Conversation saved")
         return rid
     except Exception as e:
-        print(f"❌ Error saving conversation: {e}")
+        logger.error(f"❌ Error saving conversation: {e}")
         return False

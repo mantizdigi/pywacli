@@ -12,4 +12,5 @@ langchain-community
 langchain-openai
 langchain-google-genai
 langchain-anthropic
+qrcode[pil]
 # GLM / ZhipuAI uses OpenAI-compatible API via langchain-openai

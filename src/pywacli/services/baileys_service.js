@@ -1,29 +1,21 @@
-
-const {
-    broadcastEvent
-} = require("./ws_server")
-
-const {
-    setSocket
-} = require("./session_manager")
-
+const { setSocket, getSocket } = require("./session_manager")
 
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    DisconnectReason
-} = require("baileys")
-
-const P = require("pino")
-const qrcode = require("qrcode-terminal")
-
-const fs = require("fs")
-const path = require("path")
-const os = require("os")
-const{
+    DisconnectReason,
     normalizeMessageContent,
     downloadContentFromMessage
 } = require("baileys")
+
+const P = require("pino")
+const fs = require("fs")
+const path = require("path")
+const os = require("os")
+
+function writeEvent(event, data) {
+    process.stdout.write(JSON.stringify({ event, data }) + "\n")
+}
 
 function extractPhone(jid) {
     if (!jid) return ""
@@ -61,130 +53,74 @@ function extFromMime(mime) {
 
 const AUTH_DIR = path.join(os.homedir(), ".pywacli", "auth")
 
-// Wipe stale credentials so the next startSock() begins a fresh
-// pairing and Baileys emits a new QR (used after a logout / when
-// the saved session is no longer valid).
 function clearAuthState() {
-
     try {
-
-        fs.rmSync(AUTH_DIR, {
-            recursive: true,
-            force: true
-        })
-
-        console.log("🧹 Cleared auth state")
-
+        fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+        console.error("Cleared auth state")
     } catch (err) {
-
-        console.log("❌ Failed to clear auth state:", err)
+        console.error("Failed to clear auth state:", err)
     }
 }
 
-
 async function startSock() {
-
-    const {
-        state,
-        saveCreds
-    } = await useMultiFileAuthState(AUTH_DIR)
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
 
     const sock = makeWASocket({
         auth: state,
         logger: P({ level: "silent" }),
-
         markOnlineOnConnect: false,
-
         browser: ["PyWacli", "Chrome", "1.0.0"]
     })
 
     setSocket(sock)
 
     sock.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect, qr } = update
 
-        const {
-            connection,
-            lastDisconnect,
-            qr
-        } = update
-
-        // QR EVENT
         if (qr) {
-
-            console.log("\nScan QR:\n")
-
-            broadcastEvent("auth.qr", {
-                qr
-            })
-
-            qrcode.generate(qr, {
-                small: true
-            })
+            console.error("\nScan QR:\n")
+            writeEvent("auth.qr", { qr })
         }
 
-        // CONNECTED
         if (connection === "open") {
-
-            console.log("✅ Connected")
-
-            broadcastEvent("connection.open", {
-                user: sock.user
-            })
+            console.error("Connected")
+            writeEvent("connection.open", { user: sock.user })
         }
 
-        // DISCONNECTED
         if (connection === "close") {
+            const statusCode = lastDisconnect?.error?.output?.statusCode
+            const loggedOut = statusCode === DisconnectReason.loggedOut
+            const replaced = statusCode === DisconnectReason.connectionReplaced
 
-            const statusCode =
-                lastDisconnect?.error?.output?.statusCode
-
-            const loggedOut =
-                statusCode === DisconnectReason.loggedOut
-
-            broadcastEvent("connection.close", {
-                reason: statusCode,
-                loggedOut
-            })
-
-            console.log("❌ Disconnected")
+            writeEvent("connection.close", { reason: statusCode, loggedOut })
+            console.error("Disconnected")
 
             if (loggedOut) {
-
-                // Session is dead (logged out from the phone).
-                // Drop the stale creds and restart so a brand new
-                // QR is generated for re-pairing.
-                console.log("🚪 Logged out — clearing session and showing a new QR...")
-
+                console.error("Logged out - clearing session and showing a new QR...")
                 clearAuthState()
-
-                setTimeout(() => {
-                    startSock()
-                }, 3000)
-
+                setTimeout(() => startSock(), 3000)
+            } else if (replaced) {
+                // Another session/device took over this account. Reconnecting
+                // here would fight it and cause a connect/disconnect storm, so
+                // stop and let the user resolve the conflict.
+                console.error("Connection replaced by another session. Not reconnecting.")
+                console.error("Close other WhatsApp Web/device sessions (and any stray node), then restart Connect.")
+                writeEvent("error", { message: "Connection replaced by another session" })
             } else {
-
-                console.log("♻️ Reconnecting...")
-
-                setTimeout(() => {
-                    startSock()
-                }, 3000)
+                console.error("Reconnecting...")
+                setTimeout(() => startSock(), 3000)
             }
         }
     })
 
-    // SAVE CREDS
     sock.ev.on("creds.update", saveCreds)
 
-    // RECEIVE MESSAGES
     sock.ev.on("messages.upsert", async ({ messages }) => {
-
-        console.log("\n========= MESSAGE UPSERT =========")
+        console.error("\n========= MESSAGE UPSERT =========")
 
         try {
-
             for (const msg of messages) {
                 try {
-
                     const isFromMe = msg.key.fromMe
                     const contactJid = msg.key.remoteJid
                     const senderJid = isFromMe
@@ -200,10 +136,8 @@ async function startSock() {
                     const viewOnceMsg = msgContent.viewOnceMessage?.message
                     const viewOnceMsgV2 = msgContent.viewOnceMessageV2?.message
                     const viewOnceMsgV2Ext = msgContent.viewOnceMessageV2Extension?.message
-
                     const isViewOnce = !!(viewOnceMsg || viewOnceMsgV2 || viewOnceMsgV2Ext)
 
-                    // Determine media message and type
                     let mediaMessage = null
                     let mediaType = null
 
@@ -230,15 +164,14 @@ async function startSock() {
                         else if (document) { mediaType = "document"; mediaMessage = document }
                     }
 
-                    const isStatus =
-                        msg.key.remoteJid === "status@broadcast"
+                    const isStatus = msg.key.remoteJid === "status@broadcast"
 
-                    console.log("Sender:", msg.key.remoteJid)
-                    console.log("Phone:", phoneNumber)
-                    console.log("PushName:", pushName)
-                    console.log("Message ID:", msg.key.id)
-                    console.log("Media Type:", mediaType || "none")
-                    if (isViewOnce) console.log("👁 View-once media")
+                    console.error("Sender:", msg.key.remoteJid)
+                    console.error("Phone:", phoneNumber)
+                    console.error("PushName:", pushName)
+                    console.error("Message ID:", msg.key.id)
+                    console.error("Media Type:", mediaType || "none")
+                    if (isViewOnce) console.error("View-once media")
 
                     if (mediaMessage && mediaType) {
                         const stream = await downloadContentFromMessage(mediaMessage, mediaType)
@@ -257,14 +190,12 @@ async function startSock() {
                             : `media/${mediaPlural}/${contactDir}`
 
                         fs.mkdirSync(folder, { recursive: true })
-
                         const filePath = path.join(folder, fileName)
-
                         fs.writeFileSync(filePath, buffer)
 
-                        broadcastEvent("media.new",{
+                        writeEvent("media.new", {
                             jid: msg.key.remoteJid,
-                            id:msg.key.id,
+                            id: msg.key.id,
                             fileName,
                             filePath,
                             mimeType,
@@ -274,42 +205,37 @@ async function startSock() {
                             pushName,
                             phoneNumber,
                             contactPhone,
-                            fromMe:msg.key.fromMe,
-                            participant:msg.key.participant,
-                            timestamp:Date.now()
+                            fromMe: msg.key.fromMe,
+                            participant: msg.key.participant,
+                            timestamp: Date.now()
                         })
 
-                        broadcastEvent("conversation.new", {
-                                id: msg.key.id,
-                                jid: msg.key.remoteJid,
-                                messageType: "media",
-                                text:
-                                    mediaMessage?.caption ||
-                                    "",
+                        writeEvent("conversation.new", {
+                            id: msg.key.id,
+                            jid: msg.key.remoteJid,
+                            messageType: "media",
+                            text: mediaMessage?.caption || "",
+                            mediaType,
+                            mimeType,
+                            fileName,
+                            filePath,
+                            pushName,
+                            phoneNumber,
+                            contactPhone,
+                            fromMe: msg.key.fromMe,
+                            participant: msg.key.participant,
+                            isStatus,
+                            isViewOnce,
+                            timestamp: Date.now()
+                        })
 
-                                mediaType,
-                                mimeType,
-                                fileName,
-                                filePath,
-                                pushName,
-                                phoneNumber,
-                                contactPhone,
-                                fromMe: msg.key.fromMe,
-                                participant: msg.key.participant,
-                                isStatus,
-                                isViewOnce,
-                                timestamp: Date.now()
-                            })
-
-                        console.log("Media downloaded:", filePath)
-                        console.log(`Downloaded view once ${mediaType} of size ${buffer.length}`)
+                        console.error("Media downloaded:", filePath)
+                        console.error(`Downloaded view once ${mediaType} of size ${buffer.length}`)
                     }
 
                     if (!msg.message) continue
 
                     const jid = msg.key.remoteJid
-
-                    // TEXT EXTRACTION
                     const text =
                         msg.message.conversation ||
                         msg.message.extendedTextMessage?.text ||
@@ -318,24 +244,19 @@ async function startSock() {
 
                     if (!text) continue
 
-                    // COMMON PAYLOAD
                     const payload = {
-
                         jid,
                         text,
                         id: msg.key.id,
                         pushName,
                         phoneNumber,
                         contactPhone,
-                        fromMe:
-                            msg.key.fromMe,
-                        participant:
-                            msg.key.participant,
-                        timestamp:
-                            Date.now()
+                        fromMe: msg.key.fromMe,
+                        participant: msg.key.participant,
+                        timestamp: Date.now()
                     }
 
-                    broadcastEvent("conversation.new", {
+                    writeEvent("conversation.new", {
                         ...payload,
                         messageType: "text",
                         mediaType: null,
@@ -344,139 +265,81 @@ async function startSock() {
                         filePath: null,
                         isStatus
                     })
-                    
-                    // STATUS EVENT
+
                     if (isStatus) {
-
-                        payload.isMyStatus =
-                            msg.key.participant === sock.user.id
-
-                        broadcastEvent(
-                            "status.new",
-                            payload
-                        )
-                        console.log(
-                            `📸 STATUS: ${text}`
-                        )
-                    }
-
-                    // NORMAL MESSAGE
-                    else {
-                        broadcastEvent(
-                            "message.new",
-                            payload
-                        )
-                        console.log(
-                            `📩 ${jid}: ${text}`
-                        )
+                        payload.isMyStatus = msg.key.participant === sock.user.id
+                        writeEvent("status.new", payload)
+                        console.error(`STATUS: ${text}`)
+                    } else {
+                        writeEvent("message.new", payload)
+                        console.error(`${jid}: ${text}`)
                     }
 
                 } catch (err) {
-
-                    console.log(
-                        "❌ Error processing message:",
-                        err
-                    )
+                    console.error("Error processing message:", err)
                 }
             }
-
         } catch (err) {
-
-            console.log(
-                "❌ messages.upsert error:",
-                err
-            )
+            console.error("messages.upsert error:", err)
         }
     })
 
-
-    // MESSAGE UPDATE
     sock.ev.on("messages.update", async (updates) => {
-
         try {
-
-
             for (const update of updates) {
-
                 try {
-
                     const sender = update.key.remoteJid
-
-                    const edited =
-                        update.update?.message?.editedMessage?.message
-
+                    const edited = update.update?.message?.editedMessage?.message
                     if (!edited) continue
 
-                    const text =
-                        edited.conversation ||
-                        edited.extendedTextMessage?.text
+                    const text = edited.conversation || edited.extendedTextMessage?.text
 
-                    console.log("\n========= MESSAGE EDITED =========")
-                    console.log("✏️ Message Edited")
-                    console.log("Sender:", sender)
-                    console.log("New Text:", text)
+                    console.error("\n========= MESSAGE EDITED =========")
+                    console.error("Message Edited")
+                    console.error("Sender:", sender)
+                    console.error("New Text:", text)
 
-                    broadcastEvent("message.update", {
+                    writeEvent("message.update", {
                         jid: sender,
                         text,
                         id: update.key.id,
                         pushName: update.pushName,
                         fromMe: update.key.fromMe,
-                        timestamp:Date.now()
+                        timestamp: Date.now()
                     })
 
                 } catch (err) {
-
-                    console.log("❌ Error processing updated message:", err)
+                    console.error("Error processing updated message:", err)
                 }
             }
-
         } catch (err) {
-
-            console.log("❌ messages.update error:", err)
+            console.error("messages.update error:", err)
         }
     })
 
-
-    // MESSAGE DELETE
     sock.ev.on("messages.delete", (item) => {
-
         try {
-
-            console.log("==========🗑 Message Deleted =========")
-        
+            console.error("========== Message Deleted =========")
             const deletedMessages = item.keys.map((k) => ({
-
                 id: k.id,
                 jid: k.remoteJid,
                 fromMe: k.fromMe,
                 pushName: item.pushName,
                 timestamp: Date.now()
-
             }))
 
-            broadcastEvent("message.delete", {
-                messages: deletedMessages
-            })
+            writeEvent("message.delete", { messages: deletedMessages })
 
         } catch (err) {
-
-            console.log("❌ messages.delete error:", err)
+            console.error("messages.delete error:", err)
         }
     })
 
-
-    // MESSAGE REACTION
     sock.ev.on("messages.reaction", (reactions) => {
-
         try {
-
-            console.log("==========❤️ Reaction =========")
-
+            console.error("========== Reaction =========")
             const formattedReactions = reactions.map((r) => ({
-
                 jid: r.key.remoteJid,
-
                 messageId: r.key.id,
                 reaction: r.reaction?.text,
                 fromMe: r.key.fromMe,
@@ -487,41 +350,108 @@ async function startSock() {
                     fromMe: r.reaction?.key?.fromMe,
                     pushName: r.reaction?.pushName
                 },
-
-                timestamp:
-                    r.reaction?.senderTimestampMs?.low ||
-                    Date.now()
-
+                timestamp: r.reaction?.senderTimestampMs?.low || Date.now()
             }))
 
-            broadcastEvent("message.reaction", {
-                reactions: formattedReactions
-            })
+            writeEvent("message.reaction", { reactions: formattedReactions })
 
         } catch (err) {
-
-            console.log("❌ messages.reaction error:", err)
+            console.error("messages.reaction error:", err)
         }
     })
 
-
-    // PRESENCE UPDATE
     sock.ev.on("presence.update", (presence) => {
-
         try {
-
-            console.log("==========🟢 Presence =========")
-            broadcastEvent("presence.update", {
-                presence
-            })
-
+            console.error("========== Presence =========")
+            writeEvent("presence.update", { presence })
         } catch (err) {
-
-            console.log("❌ presence.update error:", err)
+            console.error("presence.update error:", err)
         }
     })
-
 }
 
+// Handle one newline-delimited JSON command. `reply` (if given) sends a JSON
+// response back to the caller — used by the TCP server so a separate Send
+// process can learn whether the message went out.
+async function handleCommand(line, reply) {
+    if (!line.trim()) return
 
-startSock()
+    let msg
+    try {
+        msg = JSON.parse(line)
+    } catch (err) {
+        console.error("Failed to parse command:", err)
+        if (reply) reply({ event: "error", data: { message: "Invalid JSON" } })
+        return
+    }
+
+    if (msg.event !== "send.message") return
+
+    const sock = getSocket()
+    if (!sock) {
+        const payload = { event: "error", data: { message: "Socket not initialized" } }
+        writeEvent(payload.event, payload.data)
+        if (reply) reply(payload)
+        return
+    }
+
+    try {
+        console.error("Sending message to", msg.data.jid)
+        await sock.sendMessage(msg.data.jid, { text: msg.data.text })
+        console.error("Message Sent to", msg.data.jid)
+        const payload = { event: "message.sent", data: { jid: msg.data.jid, text: msg.data.text } }
+        writeEvent(payload.event, payload.data)
+        if (reply) reply(payload)
+    } catch (err) {
+        console.error("Failed to send message:", err)
+        const payload = { event: "error", data: { message: String((err && err.message) || err) } }
+        writeEvent(payload.event, payload.data)
+        if (reply) reply(payload)
+    }
+}
+
+// Commands over stdin (same-process use).
+const readline = require("readline")
+const rl = readline.createInterface({ input: process.stdin })
+rl.on("line", (line) => { handleCommand(line, null) })
+
+// Commands over a local TCP socket so a separate `Send` process (another
+// terminal) can reach this single connection without opening its own.
+const net = require("net")
+const SEND_HOST = process.env.PYWACLI_SEND_HOST || "127.0.0.1"
+const SEND_PORT = parseInt(process.env.PYWACLI_SEND_PORT || "8765", 10)
+
+const commandServer = net.createServer((conn) => {
+    let buffer = ""
+    conn.on("data", (chunk) => {
+        buffer += chunk.toString("utf8")
+        let idx
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, idx)
+            buffer = buffer.slice(idx + 1)
+            handleCommand(line, (payload) => {
+                try { conn.write(JSON.stringify(payload) + "\n") } catch (e) { }
+            })
+        }
+    })
+    conn.on("error", () => { })
+})
+
+commandServer.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+        // Another Connect already owns the port (and the WhatsApp socket).
+        // Exit instead of opening a second socket on the same auth, which
+        // would make WhatsApp kick one and trigger a reconnect storm.
+        console.error(`Command port ${SEND_HOST}:${SEND_PORT} is in use — another Connect session is already running. Exiting to avoid a duplicate connection.`)
+        process.exit(1)
+    } else {
+        console.error("Command server error:", err)
+    }
+})
+
+// Only open the WhatsApp socket once we own the command port — this enforces a
+// single live connection across terminals.
+commandServer.listen(SEND_PORT, SEND_HOST, () => {
+    console.error(`Command server listening on ${SEND_HOST}:${SEND_PORT}`)
+    startSock()
+})

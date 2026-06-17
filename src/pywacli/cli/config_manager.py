@@ -88,6 +88,73 @@ def get_log_level() -> str:
     return (config.get("logging") or {}).get("level", "INFO")
 
 
+def get_send_host() -> str:
+    """Host of the local command server that the running Connect session hosts."""
+    config = load_config()
+    return (config.get("whatsapp") or {}).get("send_host", "127.0.0.1")
+
+
+def get_send_port() -> int:
+    """Port of the local command server (Connect hosts it, Send connects to it)."""
+    config = load_config()
+    return int((config.get("whatsapp") or {}).get("send_port", 8765))
+
+
+import threading
+
+# When set, service loggers stop writing to the console (still write to the log
+# file). Used to keep the interactive Send prompt clean while messages arrive.
+_console_logs_muted = threading.Event()
+
+
+def mute_console_logs() -> None:
+    _console_logs_muted.set()
+
+
+def unmute_console_logs() -> None:
+    _console_logs_muted.clear()
+
+
+def console_logs_muted() -> bool:
+    return _console_logs_muted.is_set()
+
+
+class _ConsoleMuteFilter(logging.Filter):
+    """Drop console records while the interactive Send flow is active."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _console_logs_muted.is_set()
+
+
+def get_service_logger(name: str = "pywacli.service") -> logging.Logger:
+    """Logger for the per-event 'saved' / media status messages.
+
+    Writes to the log file always, and to the console too — except while the
+    interactive Send flow has muted console output (so the picker/prompt stays
+    clean while incoming messages are still saved in the background).
+    """
+    logger = logging.getLogger(name)
+    if not getattr(logger, "_pywacli_configured", False):
+        log_file = get_log_file()
+        os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        )
+        logger.addHandler(file_handler)
+
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+        console_handler.addFilter(_ConsoleMuteFilter())
+        logger.addHandler(console_handler)
+
+        logger.setLevel(getattr(logging, get_log_level().upper(), logging.INFO))
+        logger.propagate = False
+        logger._pywacli_configured = True
+    return logger
+
+
 def setup_logging() -> None:
     """Attach a file handler (configured path) + console handler to the root logger.
 

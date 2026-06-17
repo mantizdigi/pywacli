@@ -2,6 +2,7 @@ import sys
 import os
 import re
 import shutil
+import socket
 import subprocess
 import importlib.resources
 from pathlib import Path
@@ -14,14 +15,36 @@ from rich.prompt import Prompt
 from pywacli.cli.configuration import run_config_wizard
 from pywacli.cli.app import main as launch_dashboard
 from pywacli.cli.ui.media_viewer import run_media_viewer
+from pywacli.cli.config_manager import (
+    get_service_logger,
+    console_logs_muted,
+    get_send_host,
+    get_send_port,
+)
 
 console = Console()
+
+# Background WhatsApp session chatter (node logs, connection state). Shown on the
+# console AND written to the log file, but silenced on the console while the
+# interactive Send flow is active so the picker/prompt stays clean.
+_session_log = get_service_logger("pywacli.session")
 
 
 def _contact_key(jid: str, phone: str = "") -> str:
     """Normalize a contact identifier for dedup (strip WhatsApp suffixes)."""
     raw = jid or phone
     return re.sub(r"@\w+(\.\w+)*$", "", raw).strip()
+
+
+def _sort_contacts(contacts):
+    """Order contacts for the picker: named contacts first (alphabetical,
+    case-insensitive), then unnamed / group-only entries by their id."""
+    def key(c):
+        name = (c.get("name") or "").strip()
+        has_name = bool(name) and name != "-"
+        ident = c.get("phone") or c.get("jid") or ""
+        return (0 if has_name else 1, name.casefold() if has_name else ident)
+    return sorted(contacts, key=key)
 
 
 def _ensure_jid(raw_jid: str) -> str:
@@ -151,33 +174,210 @@ def init():
     console.print("[green]✓ Node dependencies installed.[/]")
 
 
-@app.command()
-def run():
-    """Run baileys service and websocket service in separate terminals"""
+def _display_qr(qr_string):
+    import qrcode
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(qr_string)
+    qr.print_ascii()
+
+
+class _Session:
+    """A live baileys bridge: it owns the single WhatsApp socket, streams events
+    (saved to DB, logged to the console), shows the QR, and sends messages over
+    the node process's stdin."""
+
+    def __init__(self, proc, stop, connected, cleanup):
+        self.proc = proc
+        self.stop = stop
+        self.connected = connected
+        self._cleanup = cleanup
+
+    def wait_connected(self, timeout=None):
+        """Block until the WhatsApp session is live. Returns True if connected."""
+        import time as _time
+        deadline = None if timeout is None else _time.monotonic() + timeout
+        while not self.stop.is_set() and self.proc.poll() is None:
+            if self.connected.wait(timeout=0.3):
+                return True
+            if deadline is not None and _time.monotonic() >= deadline:
+                break
+        return self.connected.is_set()
+
+    def is_alive(self):
+        return not self.stop.is_set() and self.proc.poll() is None
+
+    def close(self):
+        self._cleanup()
+
+
+def _launch_session():
+    """Spawn the single baileys node bridge, register it for sending, and start
+    the background threads that stream/save events and display the QR. Returns a
+    _Session. Exits the command if node / its deps are missing."""
+    import queue
+    import threading
+    import json
+    from pywacli.services.event_processor import process_event
+    from pywacli.services.message_sender import set_node_process
+
     if shutil.which("node") is None:
-        console.print("[red]Node.js was not found on PATH.[/] Install it, then run [bold]pywacli init[/].")
+        console.print("[red]Node.js was not found on PATH.[/]")
         raise typer.Exit(code=1)
     if not _node_modules_present():
         console.print("[yellow]Node dependencies not found. Run [bold]pywacli init[/] first.[/]")
         raise typer.Exit(code=1)
 
     baileys_js = _package_dir().joinpath("services", "baileys_service.js")
-    flags = subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0
 
-    # Node service: cwd stays at the user's directory so ./auth and ./media
-    # are created where the user expects them.
-    subprocess.Popen(
+    console.print("[cyan]Starting WhatsApp bridge...[/]")
+
+    # Tell the node bridge which local port to host its command server on, so a
+    # separate Send process can reach this single connection.
+    node_env = {
+        **os.environ,
+        "PYWACLI_SEND_HOST": get_send_host(),
+        "PYWACLI_SEND_PORT": str(get_send_port()),
+    }
+
+    proc = subprocess.Popen(
         ["node", str(baileys_js)],
-        creationflags=flags,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         cwd=os.getcwd(),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=node_env,
     )
-    # Python websocket service: launched as a module so its `pywacli.*`
-    # imports resolve regardless of where it lives on disk.
-    subprocess.Popen(
-        [sys.executable, "-m", "pywacli.services.websocket_services"],
-        creationflags=flags,
-        cwd=os.getcwd(),
-    )
+
+    set_node_process(proc)
+
+    console.print("[dim]Waiting for QR code...[/]")
+
+    event_queue = queue.Queue()
+    stop = threading.Event()
+    connected = threading.Event()
+
+    def _read_stdout():
+        for line in proc.stdout:
+            line = line.strip()
+            if line:
+                event_queue.put(line)
+        event_queue.put(None)
+
+    def _read_stderr():
+        for line in proc.stderr:
+            text = line.rstrip()
+            # Node's verbose logs go to the file always, and to the console
+            # unless the Send flow has muted it.
+            _session_log.info(text)
+
+    def _process_events():
+        while not stop.is_set():
+            try:
+                line = event_queue.get(timeout=0.5)
+            except queue.Empty:
+                if proc.poll() is not None:
+                    _session_log.error("Node.js process exited unexpectedly.")
+                    stop.set()
+                    break
+                continue
+
+            if line is None:
+                stop.set()
+                break
+
+            try:
+                msg = json.loads(line)
+                event = msg.get("event")
+                data = msg.get("data", {})
+
+                if event == "auth.qr":
+                    # Always surface the QR — it's needed to (re)authenticate.
+                    qr_data = data.get("qr", "")
+                    console.print("[bold cyan]Scan the QR code below with WhatsApp:[/]")
+                    _display_qr(qr_data)
+                elif event == "connection.open":
+                    user = data.get("user", {})
+                    phone = user.get("id", "")
+                    connected.set()
+                    if not console_logs_muted():
+                        console.print(f"[bold green]Connected as {phone}[/]")
+                elif event == "connection.close":
+                    logged_out = data.get("loggedOut", False)
+                    connected.clear()
+                    text = ("Logged out. Waiting for new QR..." if logged_out
+                            else "Disconnected. Reconnecting...")
+                    if not console_logs_muted():
+                        console.print(f"[yellow]{text}[/]")
+                elif event == "error":
+                    err = data.get("message", "Unknown")
+                    if not console_logs_muted():
+                        console.print(f"[red]Error: {err}[/]")
+                else:
+                    process_event(event, data)
+
+            except json.JSONDecodeError:
+                continue
+            except Exception as e:
+                _session_log.error(f"Error processing event: {e}")
+
+    threading.Thread(target=_read_stdout, daemon=True).start()
+    threading.Thread(target=_read_stderr, daemon=True).start()
+    threading.Thread(target=_process_events, daemon=True).start()
+
+    def cleanup():
+        stop.set()
+        set_node_process(None)
+        console.print("[yellow]Disconnecting WhatsApp...[/]")
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+        console.print("[green]Disconnected.[/]")
+
+    return _Session(proc, stop, connected, cleanup)
+
+
+@app.command()
+def connect():
+    """Connect to WhatsApp - single terminal: shows QR and receives/saves events."""
+    import time
+
+    session = _launch_session()
+    try:
+        # Passive listener: stream and save events until interrupted.
+        while session.is_alive():
+            time.sleep(0.3)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        session.close()
+
+
+def _service_reachable():
+    """True if a Connect session's local command server is accepting connections."""
+    try:
+        with socket.create_connection((get_send_host(), get_send_port()), timeout=0.4):
+            return True
+    except OSError:
+        return False
+
+
+def _menu_send():
+    """Menu 6: send through the Connect session running in another terminal.
+    Opens no WhatsApp socket of its own — just talks to the command server."""
+    if not _service_reachable():
+        console.print(
+            "[yellow]WhatsApp service not reachable.[/] "
+            "Start [bold]Connect (4)[/] in another terminal first."
+        )
+        Prompt.ask("[dim]Press Enter to continue[/]", default="")
+        return
+    _interactive_send()
 
 
 def _interactive_send():
@@ -225,6 +425,8 @@ def _interactive_send():
                 if key and key not in seen:
                     merged.append({"phone": c["phone"], "name": c.get("name", ""), "jid": c.get("jid", "")})
                     seen.add(key)
+
+            merged = _sort_contacts(merged)
 
             if merged:
                 table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
@@ -389,6 +591,8 @@ def _interactive_automate():
         if key and key not in seen:
             merged.append({"phone": c["phone"], "name": c.get("name", ""), "jid": c.get("jid", "")})
             seen.add(key)
+
+    merged = _sort_contacts(merged)
 
     phone = None
 
@@ -659,6 +863,11 @@ def _show_menu():
         )
         console.print(title)
 
+        if _service_reachable():
+            console.print("[bold green]● WhatsApp service running[/] [dim](Connect is live in another terminal)[/]")
+        else:
+            console.print("[dim]○ Not connected — run 4 (Connect) in a separate terminal[/]")
+
         table = Table(box=ROUNDED, show_header=False, border_style="cyan", padding=(0, 2))
         table.add_column("Key", style="bold magenta", width=6)
         table.add_column("Option", style="bold white", width=20)
@@ -666,17 +875,17 @@ def _show_menu():
         table.add_row("1", "Dashboard", "Launch the WhatsApp dashboard")
         table.add_row("2", "Setup", "Run the interactive configuration wizard")
         table.add_row("3", "Config", "Open configuration menu")
-        table.add_row("4", "Run", "Start baileys + websocket services")
-        table.add_row("5", "Send", "Send a WhatsApp message")
-        table.add_row("6", "Automate", "AI-powered automated chat")
-        table.add_row("7", "Media", "Browse stored media")
-        table.add_row("8", "Init", "Install Node.js (Baileys) dependencies")
+        table.add_row("4", "Connect", "Connect WhatsApp (QR) — keep this terminal open")
+        table.add_row("6", "Send", "Send a WhatsApp message")
+        table.add_row("7", "Automate", "AI-powered automated chat")
+        table.add_row("8", "Media", "Browse stored media")
+        table.add_row("9", "Init", "Install Node.js (Baileys) dependencies")
         table.add_row("0", "Exit", "Exit the application")
         console.print(table)
 
         choice = Prompt.ask(
             "\n[bold cyan]Enter your choice[/]",
-            choices=["0", "1", "2", "3", "4", "5", "6", "7", "8"],
+            choices=["0", "1", "2", "3", "4", "6", "7", "8", "9"],
             default="1"
         )
 
@@ -687,14 +896,14 @@ def _show_menu():
         elif choice == "3":
             run_config_wizard()
         elif choice == "4":
-            run()
-        elif choice == "5":
-            _interactive_send()
+            connect()
         elif choice == "6":
-            _interactive_automate()
+            _menu_send()
         elif choice == "7":
-            run_media_viewer()
+            _interactive_automate()
         elif choice == "8":
+            run_media_viewer()
+        elif choice == "9":
             init()
         elif choice == "0":
             console.print("[yellow]Exiting...[/]")
